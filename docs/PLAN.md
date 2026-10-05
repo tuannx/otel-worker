@@ -100,8 +100,9 @@ Gate: fork `tuannx/otel-worker` tồn tại; tài liệu này + `AI-TRACE.md` + 
 Hiện trạng: fork xong; Rust toolchain **chưa có** trong môi trường agent (`cargo: command not found`) → build verify để ở P1, không giả pass.
 
 ### P1 — Ingest đủ 3 signals + Basin sink
-- Thêm `/v1/logs`, `/v1/metrics` (OTLP/HTTP JSON+protobuf), API key theo tenant, dual-write: D1 hot + Basin Pipelines binding (feature flag `BASIN_ENABLED`).
+- Thêm `/v1/logs`, `/v1/metrics` (OTLP/HTTP JSON+protobuf), API key theo tenant, dual-write: D1 hot + Basin Pipelines HTTP sink (bật khi đặt `BASIN_PIPELINE_URL`; tắt = hành vi cũ).
 - Gate: gửi fixture trace/log/metric bằng script trong `examples/` → (a) D1 đếm đúng số span/log/sample, (b) Basin SQL đếm đúng (±0) sau khi pipeline flush, (c) trace lỗi + AI span giữ 100% dù sampling <100%.
+- Trạng thái 2026-10-05: code xong trên branch `feat/p1-logs-metrics-basin` — `cargo test -p otel-worker-core -p otel-worker-cli` pass (10 tests, gồm 2 test P1: round-trip logs/metrics qua libsql + đếm proto→model từ fixture), `cargo check -p otel-worker --target wasm32-unknown-unknown` pass. Gate (a) ở mức store/fixture: pass. Gate (b) Basin SQL: **chưa chạy được** — cần Cloudflare account của Xuan để tạo Basin Pipeline thật (verdict phần Basin: warn).
 
 ### P2 — Query API + UI MVP
 - Services list (rate/error/p95 từ Basin SQL, cache D1), trace detail flamegraph (hot D1, fallback Basin), log explorer lọc theo `trace_id`.

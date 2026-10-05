@@ -222,4 +222,108 @@ impl Store for D1Store {
         })
         .await
     }
+
+    async fn log_create(
+        &self,
+        _tx: &Transaction,
+        log: models::LogRecord,
+    ) -> Result<models::LogRecord> {
+        SendFuture::new(async {
+            let trace_id = match &log.trace_id {
+                Some(v) => JsValue::from_str(v),
+                None => JsValue::null(),
+            };
+            let span_id = match &log.span_id {
+                Some(v) => JsValue::from_str(v),
+                None => JsValue::null(),
+            };
+            self.fetch_one(
+                self.sql_builder.log_create(),
+                &[
+                    JsValue::from_str(&log.tenant_id),
+                    JsValue::from_str(&log.service_name),
+                    trace_id,
+                    span_id,
+                    JsValue::from_f64(log.severity_number as f64),
+                    JsValue::from_str(&log.severity_text),
+                    JsValue::from_str(&log.body),
+                    log.timestamp.into(),
+                    JsValue::from_str(&log.attributes),
+                    JsValue::from_str(&log.resource_attributes),
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn logs_list_by_trace(
+        &self,
+        _tx: &Transaction,
+        trace_id: &HexEncodedId,
+    ) -> Result<Vec<models::LogRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(self.sql_builder.logs_list_by_trace(), &[trace_id.into()])
+                .await
+        })
+        .await
+    }
+
+    async fn logs_list(
+        &self,
+        _tx: &Transaction,
+        limit: Option<u32>,
+    ) -> Result<Vec<models::LogRecord>> {
+        SendFuture::new(async { self.fetch_all(self.sql_builder.logs_list(limit), &[]).await })
+            .await
+    }
+
+    async fn metric_create(
+        &self,
+        _tx: &Transaction,
+        sample: models::MetricSample,
+    ) -> Result<models::MetricSample> {
+        SendFuture::new(async {
+            self.fetch_one(
+                self.sql_builder.metric_create(),
+                &[
+                    JsValue::from_str(&sample.tenant_id),
+                    JsValue::from_str(&sample.service_name),
+                    JsValue::from_str(&sample.metric_name),
+                    JsValue::from_str(&sample.kind),
+                    sample.timestamp.into(),
+                    JsValue::from_f64(sample.value),
+                    JsValue::from_str(&sample.attributes),
+                    JsValue::from_str(&sample.resource_attributes),
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn metrics_list(
+        &self,
+        _tx: &Transaction,
+        limit: Option<u32>,
+    ) -> Result<Vec<models::MetricSample>> {
+        SendFuture::new(async {
+            self.fetch_all(self.sql_builder.metrics_list(limit), &[])
+                .await
+        })
+        .await
+    }
+
+    async fn api_key_get(&self, key_hash: &str) -> Result<Option<models::ApiKey>> {
+        SendFuture::new(async {
+            let keys: Vec<models::ApiKey> = self
+                .fetch_all(
+                    self.sql_builder.api_key_get(),
+                    &[JsValue::from_str(key_hash)],
+                )
+                .await?;
+            Ok(keys.into_iter().next())
+        })
+        .await
+    }
 }

@@ -1,10 +1,20 @@
 use crate::api::models::{Span, SpanAdded};
+use crate::data::models::{LogRecord, MetricSample};
 use crate::data::{BoxedEvents, BoxedStore, DbError};
+use crate::sink::{self, BoxedSink};
 use anyhow::Result;
+use opentelemetry_proto::tonic::collector::logs::v1::{
+    ExportLogsServiceRequest, ExportLogsServiceResponse,
+};
+use opentelemetry_proto::tonic::collector::metrics::v1::{
+    ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+};
 use opentelemetry_proto::tonic::collector::trace::v1::{
     ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
+use std::sync::Arc;
 use thiserror::Error;
+use tracing::warn;
 
 /// Service implements shared logic for both the gRPC and HTTP API, and possibly
 /// any future API interactions.
@@ -16,11 +26,32 @@ use thiserror::Error;
 pub struct Service {
     store: BoxedStore,
     events: BoxedEvents,
+    sink: BoxedSink,
 }
 
 impl Service {
     pub fn new(store: BoxedStore, events: BoxedEvents) -> Self {
-        Self { store, events }
+        Self {
+            store,
+            events,
+            sink: Arc::new(sink::NoopSink),
+        }
+    }
+
+    /// Enable Basin dual-write. Publishing failures are logged, never fatal:
+    /// D1 remains the committed source of truth (P1 policy).
+    pub fn with_sink(mut self, sink: BoxedSink) -> Self {
+        self.sink = sink;
+        self
+    }
+
+    async fn publish(&self, signal: &str, records: Vec<serde_json::Value>) {
+        if records.is_empty() {
+            return;
+        }
+        if let Err(err) = self.sink.publish(signal, records).await {
+            warn!(%signal, %err, "Basin dual-write failed (D1 write already committed)");
+        }
     }
 
     /// Ingest the given export message and store it in the [`Store`]. On success
@@ -33,22 +64,78 @@ impl Service {
         &self,
         request: ExportTraceServiceRequest,
     ) -> Result<ExportTraceServiceResponse, IngestExportError> {
+        self.ingest_traces(request, "default").await
+    }
+
+    pub async fn ingest_traces(
+        &self,
+        request: ExportTraceServiceRequest,
+        tenant_id: &str,
+    ) -> Result<ExportTraceServiceResponse, IngestExportError> {
         let trace_ids = Self::extract_trace_ids(&request);
 
         let tx = self.store.start_readwrite_transaction().await?;
 
         let spans = Span::from_collector_request(request);
+        let basin_records: Vec<_> = spans
+            .iter()
+            .map(|span| sink::span_record(span, tenant_id))
+            .collect();
         for span in spans {
             self.store.span_create(&tx, span.into()).await?;
         }
 
         self.store.commit_transaction(tx).await?;
 
+        self.publish("spans", basin_records).await;
+
         self.events
             .broadcast(SpanAdded::new(trace_ids).into())
             .await;
 
         Ok(ExportTraceServiceResponse {
+            partial_success: None,
+        })
+    }
+
+    pub async fn ingest_logs(
+        &self,
+        request: ExportLogsServiceRequest,
+        tenant_id: &str,
+    ) -> Result<ExportLogsServiceResponse, IngestExportError> {
+        let logs = LogRecord::from_collector_request(request, tenant_id);
+        let basin_records: Vec<_> = logs.iter().map(sink::log_record).collect();
+
+        let tx = self.store.start_readwrite_transaction().await?;
+        for log in logs {
+            self.store.log_create(&tx, log).await?;
+        }
+        self.store.commit_transaction(tx).await?;
+
+        self.publish("logs", basin_records).await;
+
+        Ok(ExportLogsServiceResponse {
+            partial_success: None,
+        })
+    }
+
+    pub async fn ingest_metrics(
+        &self,
+        request: ExportMetricsServiceRequest,
+        tenant_id: &str,
+    ) -> Result<ExportMetricsServiceResponse, IngestExportError> {
+        let samples = MetricSample::from_collector_request(request, tenant_id);
+        let basin_records: Vec<_> = samples.iter().map(sink::metric_record).collect();
+
+        let tx = self.store.start_readwrite_transaction().await?;
+        for sample in samples {
+            self.store.metric_create(&tx, sample).await?;
+        }
+        self.store.commit_transaction(tx).await?;
+
+        self.publish("metric_samples", basin_records).await;
+
+        Ok(ExportMetricsServiceResponse {
             partial_success: None,
         })
     }

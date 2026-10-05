@@ -220,4 +220,122 @@ impl Store for LibsqlStore {
 
         Ok(Some(rows_affected))
     }
+
+    async fn log_create(
+        &self,
+        _tx: &Transaction,
+        log: otel_worker_core::data::models::LogRecord,
+    ) -> Result<otel_worker_core::data::models::LogRecord> {
+        let log = self
+            .connection
+            .query(
+                &self.sql_builder.log_create(),
+                params!(
+                    log.tenant_id,
+                    log.service_name,
+                    log.trace_id,
+                    log.span_id,
+                    log.severity_number,
+                    log.severity_text,
+                    log.body,
+                    log.timestamp,
+                    log.attributes,
+                    log.resource_attributes
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+
+        Ok(log)
+    }
+
+    async fn logs_list_by_trace(
+        &self,
+        _tx: &Transaction,
+        trace_id: &HexEncodedId,
+    ) -> Result<Vec<otel_worker_core::data::models::LogRecord>> {
+        let logs = self
+            .connection
+            .query(&self.sql_builder.logs_list_by_trace(), params!(trace_id))
+            .await?
+            .fetch_all()
+            .await?;
+
+        Ok(logs)
+    }
+
+    async fn logs_list(
+        &self,
+        _tx: &Transaction,
+        limit: Option<u32>,
+    ) -> Result<Vec<otel_worker_core::data::models::LogRecord>> {
+        let logs = self
+            .connection
+            .query(&self.sql_builder.logs_list(limit), ())
+            .await?
+            .fetch_all()
+            .await?;
+
+        Ok(logs)
+    }
+
+    async fn metric_create(
+        &self,
+        _tx: &Transaction,
+        sample: otel_worker_core::data::models::MetricSample,
+    ) -> Result<otel_worker_core::data::models::MetricSample> {
+        let sample = self
+            .connection
+            .query(
+                &self.sql_builder.metric_create(),
+                params!(
+                    sample.tenant_id,
+                    sample.service_name,
+                    sample.metric_name,
+                    sample.kind,
+                    sample.timestamp,
+                    sample.value,
+                    sample.attributes,
+                    sample.resource_attributes
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+
+        Ok(sample)
+    }
+
+    async fn metrics_list(
+        &self,
+        _tx: &Transaction,
+        limit: Option<u32>,
+    ) -> Result<Vec<otel_worker_core::data::models::MetricSample>> {
+        let samples = self
+            .connection
+            .query(&self.sql_builder.metrics_list(limit), ())
+            .await?
+            .fetch_all()
+            .await?;
+
+        Ok(samples)
+    }
+
+    async fn api_key_get(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<otel_worker_core::data::models::ApiKey>> {
+        let key = self
+            .connection
+            .query(
+                &self.sql_builder.api_key_get(),
+                params!(key_hash.to_string()),
+            )
+            .await?
+            .fetch_optional()
+            .await?;
+
+        Ok(key)
+    }
 }

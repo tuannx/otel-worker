@@ -116,4 +116,40 @@ impl SqlBuilder {
     pub fn span_delete(&self) -> String {
         String::from("DELETE FROM spans WHERE trace_id=$1 AND span_id=$2")
     }
+
+    pub fn log_create(&self) -> String {
+        String::from(
+            "INSERT INTO logs
+            (tenant_id, service_name, trace_id, span_id, severity_number, severity_text, body, timestamp, attributes, resource_attributes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING *",
+        )
+    }
+
+    pub fn logs_list_by_trace(&self) -> String {
+        String::from("SELECT * FROM logs WHERE trace_id=$1 ORDER BY timestamp ASC")
+    }
+
+    pub fn logs_list(&self, limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(100);
+        format!("SELECT * FROM logs ORDER BY timestamp DESC LIMIT {limit}")
+    }
+
+    pub fn metric_create(&self) -> String {
+        String::from(
+            "INSERT INTO metric_samples
+            (tenant_id, service_name, metric_name, kind, timestamp, value, attributes, resource_attributes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *",
+        )
+    }
+
+    pub fn metrics_list(&self, limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(100);
+        format!("SELECT * FROM metric_samples ORDER BY timestamp DESC LIMIT {limit}")
+    }
+
+    pub fn api_key_get(&self) -> String {
+        String::from("SELECT * FROM api_keys WHERE key_hash=$1 AND revoked_at IS NULL")
+    }
 }

@@ -57,7 +57,7 @@ impl LibsqlStore {
             }
 
             debug!(?current_migration, "Applying migration");
-            tx.execute(sql, ())
+            tx.execute_batch(sql)
                 .await
                 .with_context(|| format!("Applying migration {current_migration} failed"))?;
             tx.execute(

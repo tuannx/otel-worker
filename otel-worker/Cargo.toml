@@ -26,6 +26,7 @@ otel-worker-core = { version = "0.1.0", path = "../otel-worker-core", features =
 getrandom = { version = "0.2", features = ["js"] } # Required for its feature
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sha2 = { version = "0.10", default-features = false }
 time = { version = "0.3", features = ["wasm-bindgen"] }
 tower-service = "0.3.2"
 tracing = { version = "0.1", default-features = false }

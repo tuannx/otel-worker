@@ -67,6 +67,22 @@ impl Builder {
             )
             .route("/v1/traces", get(handlers::traces::traces_list_handler))
             .route(
+                "/v1/logs",
+                post(handlers::signals::log_collector_handler)
+                    .layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+            )
+            .route("/v1/logs", get(handlers::signals::logs_list_handler))
+            .route(
+                "/v1/traces/:trace_id/logs",
+                get(handlers::signals::logs_by_trace_handler),
+            )
+            .route(
+                "/v1/metrics",
+                post(handlers::signals::metric_collector_handler)
+                    .layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+            )
+            .route("/v1/metrics", get(handlers::signals::metrics_list_handler))
+            .route(
                 "/v1/traces/:trace_id",
                 get(handlers::traces::traces_get_handler)
                     .delete(handlers::traces::traces_delete_handler),

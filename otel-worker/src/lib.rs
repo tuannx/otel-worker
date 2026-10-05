@@ -16,6 +16,7 @@ use worker::*;
 use ws::client::WebSocketWorkerClient;
 use ws::handlers::{ws_connect, WorkerApiState};
 
+mod basin;
 mod data;
 mod middleware;
 mod ws;
@@ -58,12 +59,25 @@ async fn fetch(
         .expect("no auth token is set")
         .to_string();
 
-    let service = service::Service::new(boxed_store.clone(), boxed_events.clone());
+    // Basin dual-write is opt-in: set BASIN_PIPELINE_URL (and optionally the
+    // BASIN_PIPELINE_TOKEN secret). Without it, ingest is D1-only as before.
+    let mut service = service::Service::new(boxed_store.clone(), boxed_events.clone());
+    if let Ok(url) = env.var("BASIN_PIPELINE_URL") {
+        let url = url.to_string();
+        if !url.is_empty() {
+            let token = env
+                .secret("BASIN_PIPELINE_TOKEN")
+                .ok()
+                .map(|s| s.to_string());
+            service = service.with_sink(Arc::new(basin::BasinHttpSink::new(url, token)));
+        }
+    }
+    let store_for_auth = boxed_store.clone();
     let api_router =
         api::Builder::new()
             .build(service, boxed_store)
             .route_layer(axum::middleware::from_fn(move |req, next| {
-                auth_middleware(auth_token.clone(), req, next)
+                auth_middleware(auth_token.clone(), store_for_auth.clone(), req, next)
             }));
 
     let mut router: axum::Router = axum::Router::new()
