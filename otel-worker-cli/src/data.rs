@@ -161,6 +161,8 @@ impl Store for LibsqlStore {
                     span.kind,
                     span.start_time,
                     span.end_time,
+                    span.tenant_id,
+                    span.service_name,
                     span.inner,
                 ),
             )
@@ -320,6 +322,20 @@ impl Store for LibsqlStore {
             .await?;
 
         Ok(samples)
+    }
+
+    async fn spans_service_rows(
+        &self,
+        _tx: &Transaction,
+    ) -> Result<Vec<otel_worker_core::query::ServiceSpanRow>> {
+        let rows = self
+            .connection
+            .query(&self.sql_builder.spans_service_rows(), ())
+            .await?
+            .fetch_all()
+            .await?;
+
+        Ok(rows)
     }
 
     async fn api_key_get(

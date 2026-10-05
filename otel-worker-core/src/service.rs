@@ -82,7 +82,9 @@ impl Service {
             .map(|span| sink::span_record(span, tenant_id))
             .collect();
         for span in spans {
-            self.store.span_create(&tx, span.into()).await?;
+            let mut db_span: crate::data::models::Span = span.into();
+            db_span.tenant_id = tenant_id.to_string();
+            self.store.span_create(&tx, db_span).await?;
         }
 
         self.store.commit_transaction(tx).await?;

@@ -25,7 +25,20 @@ pub struct Span {
     pub start_time: Timestamp,
     pub end_time: Timestamp,
 
+    #[serde(default = "default_tenant")]
+    pub tenant_id: String,
+    #[serde(default = "default_service")]
+    pub service_name: String,
+
     pub inner: Json<api::models::Span>,
+}
+
+fn default_tenant() -> String {
+    "default".to_string()
+}
+
+fn default_service() -> String {
+    "unknown".to_string()
 }
 
 impl Span {
@@ -53,10 +66,17 @@ impl From<api::models::Span> for Span {
         let kind = span.kind.clone().unwrap_or(SpanKind::Unspecified);
         let start_time = span.start_time.into();
         let end_time = span.end_time.into();
+        let service_name = span
+            .resource_attributes
+            .as_ref()
+            .map(|attrs| service_name_from_resource(attrs))
+            .unwrap_or_else(|| "unknown".to_string());
         let inner = Json(span);
 
         // these .unwrap are safe as these are guaranteed to be valid as they come from the api `Span`
         Self {
+            tenant_id: "default".to_string(),
+            service_name,
             trace_id: HexEncodedId::new(trace_id).unwrap(),
             span_id: HexEncodedId::new(span_id).unwrap(),
             parent_span_id: parent_span_id

@@ -141,4 +141,13 @@ pub trait Store: Send + Sync {
     async fn api_key_get(&self, _key_hash: &str) -> Result<Option<models::ApiKey>> {
         Ok(None)
     }
+
+    async fn spans_service_rows(
+        &self,
+        _tx: &Transaction,
+    ) -> Result<Vec<crate::query::ServiceSpanRow>> {
+        Err(DbError::InternalError(
+            "spans_service_rows not implemented".into(),
+        ))
+    }
 }
