@@ -88,6 +88,116 @@ async fn span_successful() {
         .expect("unable to rollback transaction");
 }
 
+/// P1: logs + metrics round-trip through the same Store trait the Worker uses.
+#[test(tokio::test)]
+async fn logs_and_metrics_successful() {
+    use otel_worker_core::data::models::{LogRecord, MetricSample};
+    use otel_worker_core::data::util::Timestamp;
+
+    let store = create_test_store().await;
+    let tx = store
+        .start_readwrite_transaction()
+        .await
+        .expect("unable to create transaction");
+
+    let trace_id = HexEncodedId::new("2b76e003e3cff12e054bcd0ca6879ee4").unwrap();
+    let now: Timestamp = time::OffsetDateTime::now_utc().into();
+
+    let log = LogRecord {
+        tenant_id: "default".to_string(),
+        service_name: "checkout".to_string(),
+        trace_id: Some(trace_id.as_inner().to_string()),
+        span_id: None,
+        severity_number: 17,
+        severity_text: "ERROR".to_string(),
+        body: "payment failed".to_string(),
+        timestamp: now,
+        attributes: "{}".to_string(),
+        resource_attributes: "{}".to_string(),
+    };
+    let saved_log = store
+        .log_create(&tx, log.clone())
+        .await
+        .expect("unable to create log");
+    assert_eq!(saved_log.body, "payment failed");
+    assert_eq!(saved_log.severity_number, 17);
+
+    let by_trace = store
+        .logs_list_by_trace(&tx, &trace_id)
+        .await
+        .expect("unable to list logs by trace");
+    assert_eq!(by_trace.len(), 1);
+    assert_eq!(by_trace[0].service_name, "checkout");
+
+    let all_logs = store
+        .logs_list(&tx, Some(10))
+        .await
+        .expect("unable to list logs");
+    assert_eq!(all_logs.len(), 1);
+
+    let sample = MetricSample {
+        tenant_id: "default".to_string(),
+        service_name: "checkout".to_string(),
+        metric_name: "http.server.duration".to_string(),
+        kind: "histogram".to_string(),
+        timestamp: now,
+        value: 42.5,
+        attributes: "{}".to_string(),
+        resource_attributes: "{}".to_string(),
+    };
+    let saved_sample = store
+        .metric_create(&tx, sample)
+        .await
+        .expect("unable to create metric sample");
+    assert_eq!(saved_sample.value, 42.5);
+
+    let samples = store
+        .metrics_list(&tx, Some(10))
+        .await
+        .expect("unable to list metrics");
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].metric_name, "http.server.duration");
+
+    // Unknown API key resolves to None (worker auth then returns 401).
+    let missing = store
+        .api_key_get("deadbeef")
+        .await
+        .expect("unable to look up api key");
+    assert!(missing.is_none());
+
+    store
+        .commit_transaction(tx)
+        .await
+        .expect("unable to commit transaction");
+}
+
+/// P1: proto -> model conversion counts (fixture-level gate, no DB).
+#[test]
+fn logs_metrics_from_proto_counts() {
+    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+    use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+    use otel_worker_core::data::models::{LogRecord, MetricSample};
+
+    let logs_json = include_str!("fixtures/logs.json");
+    let request: ExportLogsServiceRequest =
+        serde_json::from_str(logs_json).expect("logs fixture must parse");
+    let logs = LogRecord::from_collector_request(request, "default");
+    assert_eq!(logs.len(), 2);
+    assert_eq!(logs[0].service_name, "checkout");
+    assert_eq!(
+        logs[0].trace_id.as_deref(),
+        Some("2b76e003e3cff12e054bcd0ca6879ee4")
+    );
+
+    let metrics_json = include_str!("fixtures/metrics.json");
+    let request: ExportMetricsServiceRequest =
+        serde_json::from_str(metrics_json).expect("metrics fixture must parse");
+    let samples = MetricSample::from_collector_request(request, "default");
+    assert_eq!(samples.len(), 2);
+    assert!(samples.iter().any(|s| s.kind == "gauge" && s.value == 7.0));
+    assert!(samples.iter().any(|s| s.kind == "histogram"));
+}
+
 pub async fn create_test_store() -> LibsqlStore {
     let store = LibsqlStore::in_memory()
         .await

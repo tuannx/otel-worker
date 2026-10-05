@@ -68,7 +68,7 @@ pub async fn trace_collector_handler(
 /// Currently this does a simple check of either the "application/json" or
 /// "application/x-protobuf" content type. If neither matches, it will return a
 /// [`StatusCode::UNSUPPORTED_MEDIA_TYPE`] error.
-pub struct JsonOrProtobuf<T>(T);
+pub struct JsonOrProtobuf<T>(pub T);
 
 #[async_trait]
 impl<T, S> FromRequest<S> for JsonOrProtobuf<T>

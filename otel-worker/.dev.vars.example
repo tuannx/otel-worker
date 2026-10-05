@@ -1,1 +1,4 @@
-AUTH_TOKEN="your-secret-token-here"
+AUTH_TOKEN=
+# Optional Basin dual-write (P1):
+# BASIN_PIPELINE_URL=https://<basin-pipeline-http-endpoint>
+# BASIN_PIPELINE_TOKEN=
