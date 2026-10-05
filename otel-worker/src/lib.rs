@@ -19,6 +19,7 @@ use ws::handlers::{ws_connect, WorkerApiState};
 mod basin;
 mod data;
 mod middleware;
+mod ui;
 mod ws;
 
 #[event(start)]
@@ -81,6 +82,10 @@ async fn fetch(
             }));
 
     let mut router: axum::Router = axum::Router::new()
+        .route(
+            "/ui",
+            get(|| async { axum::response::Html(ui::INDEX_HTML) }),
+        )
         .route("/api/ws", get(ws_connect))
         .with_state(state)
         .nest_service("/", api_router);

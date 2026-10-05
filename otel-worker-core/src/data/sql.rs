@@ -64,11 +64,23 @@ impl SqlBuilder {
                 kind,
                 start_time,
                 end_time,
+                tenant_id,
+                service_name,
                 inner
             )
             VALUES
-                ($1, $2, $3, $4, $5, $6, $7, $8)
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *",
+        )
+    }
+
+    /// Raw rows for service/operation summaries (P2). Percentiles are computed
+    /// in Rust (core::query) so D1, libsql and Basin agree on the definition.
+    pub fn spans_service_rows(&self) -> String {
+        String::from(
+            "SELECT service_name, name, start_time, end_time, \
+             CASE WHEN json_extract(inner, '$.status.code') = 2 THEN 1 ELSE 0 END AS is_error \
+             FROM spans ORDER BY start_time ASC",
         )
     }
 

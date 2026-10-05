@@ -131,6 +131,8 @@ impl Store for D1Store {
                     span.kind.into(),
                     span.start_time.into(),
                     span.end_time.into(),
+                    span.tenant_id.into(),
+                    span.service_name.into(),
                     span.inner.into(),
                 ],
             )
@@ -309,6 +311,17 @@ impl Store for D1Store {
     ) -> Result<Vec<models::MetricSample>> {
         SendFuture::new(async {
             self.fetch_all(self.sql_builder.metrics_list(limit), &[])
+                .await
+        })
+        .await
+    }
+
+    async fn spans_service_rows(
+        &self,
+        _tx: &Transaction,
+    ) -> Result<Vec<otel_worker_core::query::ServiceSpanRow>> {
+        SendFuture::new(async {
+            self.fetch_all(self.sql_builder.spans_service_rows(), &[])
                 .await
         })
         .await

@@ -107,6 +107,7 @@ Hiện trạng: fork xong; Rust toolchain **chưa có** trong môi trường age
 ### P2 — Query API + UI MVP
 - Services list (rate/error/p95 từ Basin SQL, cache D1), trace detail flamegraph (hot D1, fallback Basin), log explorer lọc theo `trace_id`.
 - Gate: e2e — ingest 1 trace 5 spans có 1 span lỗi + 3 log cùng `trace_id` → UI/API trả đúng cây span, đúng log, p95 tính tay khớp query.
+- Trạng thái 2026-10-05: xong trên branch `feat/p2-query-ui`. Query API: `GET /v1/services`, `/v1/services/:name/operations`, `/v1/metrics/summary` (percentile pinned trong `otel-worker-core/src/query.rs`, tính trên hot store; Basin SQL thay vào cùng contract ở phase sau). spans có cột `service_name`/`tenant_id` riêng (migration 20251006). UI MVP ở `ui/index.html`, Worker serve tại `/ui`: Services → Operations, Traces → Gantt theo parent/child + logs của trace, Logs, Metrics; token nhập trong browser (sessionStorage). Evidence: `cargo test` core 8/8 + cli 4/4 (gồm test p50=25ms tính tay trên durations 10/20/30/40ms), wasm check pass, JS UI qua `node --check`. Nợ: chưa chạy `wrangler dev` e2e trên D1 local (cùng nợ hạ tầng như P1).
 
 ### P3 — Dashboards, alerts, service map
 - Query builder → Basin SQL allowlist; alert evaluator bằng Cron (mỗi 1–5 phút) → webhook; service map từ edges.

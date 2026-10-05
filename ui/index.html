@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cf-signoz — traces, logs, metrics</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, Menlo, monospace; margin: 0; background: #0b0e14; color: #d6deeb; }
+  header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: #11151f; position: sticky; top: 0; }
+  header b { color: #82aaff; }
+  input, button { background: #1a2030; color: #d6deeb; border: 1px solid #2a3350; border-radius: 6px; padding: 6px 8px; }
+  button { cursor: pointer; } button.active { background: #82aaff; color: #0b0e14; }
+  main { padding: 14px; max-width: 1200px; margin: 0 auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1c2338; }
+  tr.clickable { cursor: pointer; } tr.clickable:hover { background: #141a2a; }
+  .err { color: #ff6b81; } .dim { color: #69738d; } .ok { color: #7ee787; }
+  .gantt { position: relative; margin-top: 8px; }
+  .row { display: flex; align-items: center; gap: 8px; height: 22px; font-size: 12px; }
+  .row .name { width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .track { flex: 1; position: relative; height: 14px; background: #141a2a; border-radius: 3px; }
+  .row .bar { position: absolute; top: 2px; height: 10px; border-radius: 3px; background: #82aaff; min-width: 2px; }
+  .row .bar.error { background: #ff6b81; }
+  .row .dur { width: 90px; text-align: right; color: #69738d; }
+  pre { background: #11151f; padding: 10px; border-radius: 6px; overflow: auto; font-size: 12px; }
+  h2 { font-size: 15px; color: #82aaff; margin-top: 22px; }
+  .pill { border: 1px solid #2a3350; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <b>cf-signoz</b>
+  <input id="base" size="28" placeholder="API base (blank = same origin)">
+  <input id="token" size="22" type="password" placeholder="Bearer token">
+  <button id="save">Connect</button>
+  <span id="status" class="dim">not connected</span>
+  <span style="flex:1"></span>
+  <button data-view="services" class="nav active">Services</button>
+  <button data-view="traces" class="nav">Traces</button>
+  <button data-view="logs" class="nav">Logs</button>
+  <button data-view="metrics" class="nav">Metrics</button>
+</header>
+<main>
+  <section id="view-services"></section>
+  <section id="view-traces" hidden></section>
+  <section id="view-logs" hidden></section>
+  <section id="view-metrics" hidden></section>
+  <section id="view-trace" hidden></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let base = localStorage.getItem('cf-signoz-base') || '';
+let token = sessionStorage.getItem('cf-signoz-token') || '';
+$('base').value = base; $('token').value = token;
+
+async function api(path) {
+  const res = await fetch(base + path, { headers: { 'Authorization': 'Bearer ' + token } });
+  if (!res.ok) throw new Error(path + ' -> HTTP ' + res.status);
+  return res.json();
+}
+const ms = (v) => (v == null ? '-' : Number(v).toFixed(1) + ' ms');
+const pct = (v) => (Number(v || 0) * 100).toFixed(1) + '%';
+const when = (sec) => sec ? new Date(sec * 1000).toLocaleString() : '-';
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function show(view) {
+  document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  ['services','traces','logs','metrics','trace'].forEach(v => $('view-' + v).hidden = v !== view);
+  ({services: loadServices, traces: loadTraces, logs: loadLogs, metrics: loadMetrics}[view] || (() => {}))()
+    .catch(e => { $('status').textContent = e.message; $('status').className = 'err'; });
+}
+
+async function loadServices() {
+  const services = await api('/v1/services');
+  $('status').textContent = 'connected · ' + services.length + ' services'; $('status').className = 'ok';
+  $('view-services').innerHTML = '<h2>Services</h2>' + (services.length ? `
+    <table><tr><th>Service</th><th>Spans</th><th>Errors</th><th>Error rate</th><th>p50</th><th>p95</th><th>p99</th><th>Last seen</th></tr>
+    ${services.map(s => `<tr class="clickable" data-service="${esc(s.service_name)}">
+      <td>${esc(s.service_name)}</td><td>${s.span_count}</td>
+      <td class="${s.error_count ? 'err' : ''}">${s.error_count}</td><td>${pct(s.error_rate)}</td>
+      <td>${ms(s.p50_ms)}</td><td>${ms(s.p95_ms)}</td><td>${ms(s.p99_ms)}</td><td class="dim">${when(s.last_seen)}</td></tr>`).join('')}
+    </table>` : '<p class="dim">No spans yet. Send traces to /v1/traces first.</p>');
+  document.querySelectorAll('[data-service]').forEach(tr => tr.onclick = () => loadOperations(tr.dataset.service));
+}
+
+async function loadOperations(service) {
+  const ops = await api('/v1/services/' + encodeURIComponent(service) + '/operations');
+  $('view-services').innerHTML = `<h2>${esc(service)} — operations</h2>
+    <table><tr><th>Operation</th><th>Spans</th><th>Errors</th><th>Error rate</th><th>p95</th><th>avg</th></tr>
+    ${ops.map(o => `<tr><td>${esc(o.name)}</td><td>${o.span_count}</td><td class="${o.error_count ? 'err' : ''}">${o.error_count}</td><td>${pct(o.error_rate)}</td><td>${ms(o.p95_ms)}</td><td>${ms(o.avg_ms)}</td></tr>`).join('')}
+    </table><p><button onclick="show('services')">← services</button></p>`;
+}
+
+async function loadTraces() {
+  const traces = await api('/v1/traces?limit=30');
+  $('view-traces').innerHTML = '<h2>Traces</h2>' + (traces.length ? `
+    <table><tr><th>Trace ID</th><th>Spans</th><th>Root operation</th></tr>
+    ${traces.map(t => {
+      const root = (t.spans || []).find(s => !(s.parent_span_id ?? s.parentSpanId)) || (t.spans || [])[0] || {};
+      return `<tr class="clickable" data-trace="${esc(t.traceId)}"><td>${esc(t.traceId)}</td><td>${(t.spans || []).length}</td><td>${esc(root.name || '')}</td></tr>`;
+    }).join('')}
+    </table>` : '<p class="dim">No traces yet.</p>');
+  document.querySelectorAll('[data-trace]').forEach(tr => tr.onclick = () => loadTrace(tr.dataset.trace));
+}
+
+async function loadTrace(traceId) {
+  show('trace');
+  const trace = await api('/v1/traces/' + traceId);
+  let logs = [];
+  try { logs = await api('/v1/traces/' + traceId + '/logs'); } catch (e) { /* logs are additive */ }
+  const startOf = (s) => s.start_time ?? s.startTime, endOf = (s) => s.end_time ?? s.endTime;
+  const idOf = (s) => s.span_id ?? s.spanId, parentOf = (s) => s.parent_span_id ?? s.parentSpanId;
+  const spans = (trace.spans || []).slice().sort((a, b) => new Date(startOf(a)) - new Date(startOf(b)));
+  const t0 = spans.length ? new Date(startOf(spans[0])).getTime() : 0;
+  const t1 = spans.length ? Math.max(...spans.map(s => new Date(endOf(s)).getTime())) : 1;
+  const spanById = new Map(spans.map(s => [idOf(s), s]));
+  const depth = (s) => { let d = 0, cur = s; while (cur && parentOf(cur) && spanById.has(parentOf(cur))) { d++; cur = spanById.get(parentOf(cur)); } return d; };
+  $('view-trace').innerHTML = `<h2>Trace ${esc(traceId)}</h2>
+    <div class="gantt">${spans.map(s => {
+      const start = new Date(startOf(s)).getTime(), end = new Date(endOf(s)).getTime();
+      const left = ((start - t0) / (t1 - t0 || 1)) * 100, width = Math.max(((end - start) / (t1 - t0 || 1)) * 100, 0.3);
+      const isErr = s.status && (s.status.code === 2 || s.status.code === 'Error');
+      return `<div class="row"><span class="name" title="${esc(s.name)}">${'· '.repeat(depth(s))}${esc(s.name)}</span>
+        <span class="track"><span class="bar ${isErr ? 'error' : ''}" style="left:${left}%;width:${width}%"></span></span>
+        <span class="dur">${ms(end - start)}</span></div>`;
+    }).join('')}</div>
+    <h2>Logs for this trace (${logs.length})</h2>
+    ${logs.length ? `<table><tr><th>Time</th><th>Service</th><th>Severity</th><th>Body</th></tr>
+      ${logs.map(l => `<tr><td class="dim">${when(l.timestamp)}</td><td>${esc(l.service_name)}</td><td class="${l.severity_number >= 17 ? 'err' : ''}">${esc(l.severity_text)}</td><td>${esc(l.body)}</td></tr>`).join('')}</table>`
+      : '<p class="dim">No logs with this trace_id.</p>'}
+    <p><button onclick="show('traces')">← traces</button></p>`;
+}
+
+async function loadLogs() {
+  const logs = await api('/v1/logs?limit=100');
+  $('view-logs').innerHTML = '<h2>Logs</h2>' + (logs.length ? `
+    <table><tr><th>Time</th><th>Service</th><th>Severity</th><th>Trace</th><th>Body</th></tr>
+    ${logs.map(l => `<tr><td class="dim">${when(l.timestamp)}</td><td>${esc(l.service_name)}</td>
+      <td class="${l.severity_number >= 17 ? 'err' : ''}">${esc(l.severity_text)}</td>
+      <td>${l.trace_id ? `<a href="#" data-logtrace="${esc(l.trace_id)}">${esc(l.trace_id.slice(0, 12))}…</a>` : '-'}</td>
+      <td>${esc(l.body)}</td></tr>`).join('')}</table>` : '<p class="dim">No logs yet. Send to /v1/logs.</p>');
+  document.querySelectorAll('[data-logtrace]').forEach(a => a.onclick = (e) => { e.preventDefault(); loadTrace(a.dataset.logtrace); });
+}
+
+async function loadMetrics() {
+  const summary = await api('/v1/metrics/summary');
+  $('view-metrics').innerHTML = '<h2>Metrics</h2>' + (summary.length ? `
+    <table><tr><th>Service</th><th>Metric</th><th>Kind</th><th>Samples</th><th>avg</th><th>min</th><th>max</th><th>last</th></tr>
+    ${summary.map(m => `<tr><td>${esc(m.service_name)}</td><td>${esc(m.metric_name)}</td><td><span class="pill">${esc(m.kind)}</span></td>
+      <td>${m.sample_count}</td><td>${Number(m.avg).toFixed(2)}</td><td>${Number(m.min).toFixed(2)}</td><td>${Number(m.max).toFixed(2)}</td><td>${Number(m.last_value).toFixed(2)}</td></tr>`).join('')}
+    </table>` : '<p class="dim">No metric samples yet. Send to /v1/metrics.</p>');
+}
+
+$('save').onclick = () => {
+  base = $('base').value.replace(/\/$/, ''); token = $('token').value;
+  localStorage.setItem('cf-signoz-base', base); sessionStorage.setItem('cf-signoz-token', token);
+  show('services');
+};
+document.querySelectorAll('.nav').forEach(b => b.onclick = () => show(b.dataset.view));
+if (token) show('services');
+</script>
+</body>
+</html>

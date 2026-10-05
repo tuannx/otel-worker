@@ -83,6 +83,15 @@ impl Builder {
             )
             .route("/v1/metrics", get(handlers::signals::metrics_list_handler))
             .route(
+                "/v1/metrics/summary",
+                get(handlers::query::metrics_summary_handler),
+            )
+            .route("/v1/services", get(handlers::query::services_list_handler))
+            .route(
+                "/v1/services/:service_name/operations",
+                get(handlers::query::service_operations_handler),
+            )
+            .route(
                 "/v1/traces/:trace_id",
                 get(handlers::traces::traces_get_handler)
                     .delete(handlers::traces::traces_delete_handler),

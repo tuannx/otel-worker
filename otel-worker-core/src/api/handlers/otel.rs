@@ -22,10 +22,14 @@ pub async fn trace_collector_handler(
     headers: HeaderMap,
     JsonOrProtobuf(payload): JsonOrProtobuf<ExportTraceServiceRequest>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
-    let response = service.ingest_export(payload).await.map_err(|err| {
-        error!(?err, "failed to ingest export");
-        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-    })?;
+    let tenant = super::signals::tenant_from_headers(&headers);
+    let response = service
+        .ingest_traces(payload, &tenant)
+        .await
+        .map_err(|err| {
+            error!(?err, "failed to ingest export");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        })?;
 
     let content_type = headers
         .get(CONTENT_TYPE)
