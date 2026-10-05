@@ -76,7 +76,30 @@ impl Service {
 
         let tx = self.store.start_readwrite_transaction().await?;
 
-        let spans = Span::from_collector_request(request);
+        // P4: apply the tenant privacy policy and build the GenAI projection
+        // before anything is persisted. Both the D1 write below and the Basin
+        // dual-write consume the sanitized spans, so dropped prompt content
+        // never reaches any store. Settings/prices reads fail safe: capture
+        // off, no prices -> no invented cost.
+        let capture_content = self
+            .store
+            .tenant_ai_settings_get(&tx, tenant_id)
+            .await
+            .map(|settings| settings.capture_content)
+            .unwrap_or(false);
+        let prices = self.store.model_prices_list(&tx).await.unwrap_or_default();
+
+        let mut spans = Span::from_collector_request(request);
+        for span in &mut spans {
+            crate::genai::sanitize_span(span, capture_content);
+        }
+        let genai_records: Vec<crate::data::models::GenAiSpanRecord> = spans
+            .iter()
+            .filter_map(|span| crate::genai::build_genai_record(span, tenant_id, &prices))
+            .collect();
+        let genai_basin_records: Vec<_> =
+            genai_records.iter().map(sink::genai_span_record).collect();
+
         let basin_records: Vec<_> = spans
             .iter()
             .map(|span| sink::span_record(span, tenant_id))
@@ -86,10 +109,14 @@ impl Service {
             db_span.tenant_id = tenant_id.to_string();
             self.store.span_create(&tx, db_span).await?;
         }
+        for record in genai_records {
+            self.store.genai_span_create(&tx, record).await?;
+        }
 
         self.store.commit_transaction(tx).await?;
 
         self.publish("spans", basin_records).await;
+        self.publish("genai_spans", genai_basin_records).await;
 
         self.events
             .broadcast(SpanAdded::new(trace_ids).into())

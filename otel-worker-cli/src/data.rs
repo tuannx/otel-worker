@@ -622,4 +622,163 @@ impl Store for LibsqlStore {
 
         Ok(key)
     }
+
+    async fn model_prices_list(
+        &self,
+        _tx: &Transaction,
+    ) -> Result<Vec<otel_worker_core::data::models::ModelPrice>> {
+        let rows = self
+            .connection
+            .query(&self.sql_builder.model_prices_list(), ())
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
+
+    async fn model_price_upsert(
+        &self,
+        _tx: &Transaction,
+        price: otel_worker_core::data::models::ModelPrice,
+    ) -> Result<otel_worker_core::data::models::ModelPrice> {
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.model_price_upsert(),
+                params!(
+                    price.provider,
+                    price.model,
+                    price.input_per_mtok,
+                    price.output_per_mtok,
+                    price.cache_read_per_mtok,
+                    price.cache_creation_per_mtok,
+                    price.effective_from
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn tenant_ai_settings_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<otel_worker_core::data::models::TenantAiSettings> {
+        let record: Option<otel_worker_core::data::models::TenantAiSettingsRecord> = self
+            .connection
+            .query(
+                &self.sql_builder.tenant_ai_settings_get(),
+                params!(tenant_id.to_string()),
+            )
+            .await?
+            .fetch_optional()
+            .await?;
+        Ok(record
+            .map(otel_worker_core::data::models::TenantAiSettings::from)
+            .unwrap_or(otel_worker_core::data::models::TenantAiSettings {
+                tenant_id: tenant_id.to_string(),
+                capture_content: false,
+            }))
+    }
+
+    async fn tenant_ai_settings_upsert(
+        &self,
+        _tx: &Transaction,
+        settings: otel_worker_core::data::models::TenantAiSettings,
+    ) -> Result<otel_worker_core::data::models::TenantAiSettings> {
+        let record = otel_worker_core::data::models::TenantAiSettingsRecord::from(&settings);
+        let saved: otel_worker_core::data::models::TenantAiSettingsRecord = self
+            .connection
+            .query(
+                &self.sql_builder.tenant_ai_settings_upsert(),
+                params!(record.tenant_id, record.capture_content),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved.into())
+    }
+
+    async fn genai_span_create(
+        &self,
+        _tx: &Transaction,
+        record: otel_worker_core::data::models::GenAiSpanRecord,
+    ) -> Result<otel_worker_core::data::models::GenAiSpanRecord> {
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.genai_span_create(),
+                params!(
+                    record.tenant_id,
+                    record.trace_id,
+                    record.span_id,
+                    record.parent_span_id,
+                    record.service_name,
+                    record.span_name,
+                    record.operation,
+                    record.provider,
+                    record.request_model,
+                    record.response_model,
+                    record.agent_name,
+                    record.tool_name,
+                    record.conversation_id,
+                    record.input_tokens,
+                    record.output_tokens,
+                    record.cache_read_tokens,
+                    record.cache_creation_tokens,
+                    record.ttft_ms,
+                    record.duration_ms,
+                    record.finish_reasons,
+                    record.cost_usd,
+                    record.price_provider,
+                    record.price_model,
+                    record.price_effective_from,
+                    record.is_error,
+                    record.start_time,
+                    record.end_time
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn genai_spans_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<otel_worker_core::data::models::GenAiSpanRecord>> {
+        let rows = self
+            .connection
+            .query(
+                &self.sql_builder.genai_spans_list(limit),
+                params!(tenant_id.to_string()),
+            )
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
+
+    async fn genai_spans_list_by_trace(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        trace_id: &HexEncodedId,
+    ) -> Result<Vec<otel_worker_core::data::models::GenAiSpanRecord>> {
+        let rows = self
+            .connection
+            .query(
+                &self.sql_builder.genai_spans_list_by_trace(),
+                params!(tenant_id.to_string(), trace_id.clone()),
+            )
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
 }

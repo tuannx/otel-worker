@@ -438,14 +438,179 @@ async fn handle_tools_list(
     let response = ListToolsResult {
         meta: None,
         next_cursor: None,
-        tools: vec![Tool {
-            description: Some("Retrieve the raw trace for a single trace".to_string()),
-            input_schema: GetTraceParams::tool_input_schema(),
-            name: "get_trace".to_string(),
-        }],
+        tools: vec![
+            Tool {
+                description: Some("Retrieve the raw trace for a single trace".to_string()),
+                input_schema: GetTraceParams::tool_input_schema(),
+                name: "get_trace".to_string(),
+            },
+            Tool {
+                description: Some(
+                    "LLM cost and token usage grouped by provider and model (P4 AI trace); \
+                     same numbers as GET /v1/ai/overview"
+                        .to_string(),
+                ),
+                input_schema: empty_tool_input_schema(),
+                name: "llm_cost_by_model".to_string(),
+            },
+            Tool {
+                description: Some(
+                    "Replay one agent run by trace_id: invoke_agent/chat/execute_tool tree \
+                     with per-step tokens, cost, and price_version; same payload as \
+                     GET /v1/ai/runs/:trace_id"
+                        .to_string(),
+                ),
+                input_schema: GetTraceParams::tool_input_schema(),
+                name: "agent_run".to_string(),
+            },
+            Tool {
+                description: Some(
+                    "execute_tool health and the failing tool spans (P4 AI trace)".to_string(),
+                ),
+                input_schema: ToolFailuresParams::tool_input_schema(),
+                name: "tool_failures".to_string(),
+            },
+            Tool {
+                description: Some(
+                    "Search projected GenAI spans by text, operation, provider, model, \
+                     conversation, or error flag (P4 AI trace)"
+                        .to_string(),
+                ),
+                input_schema: SearchAiTracesParams::tool_input_schema(),
+                name: "search_ai_traces".to_string(),
+            },
+        ],
     };
     session.send_response(request_id, response).await;
     Ok(())
+}
+
+fn empty_tool_input_schema() -> ToolInputSchema {
+    ToolInputSchema::new(Some(HashMap::new()), vec![])
+}
+
+fn string_property(description: &str) -> Map<String, Value> {
+    let mut props = serde_json::Map::new();
+    props.insert(
+        "type".to_string(),
+        serde_json::Value::String("string".to_string()),
+    );
+    props.insert(
+        "description".to_string(),
+        serde_json::Value::String(description.to_string()),
+    );
+    props
+}
+
+fn bool_property(description: &str) -> Map<String, Value> {
+    let mut props = serde_json::Map::new();
+    props.insert(
+        "type".to_string(),
+        serde_json::Value::String("boolean".to_string()),
+    );
+    props.insert(
+        "description".to_string(),
+        serde_json::Value::String(description.to_string()),
+    );
+    props
+}
+
+/// Optional `service` filter kept for forward compatibility with the
+/// docs/AI-TRACE.md tool contract; filtering is applied client-side over the
+/// tool-health payload because tool spans know their service.
+pub struct ToolFailuresParams {
+    pub service: Option<String>,
+    pub tool_name: Option<String>,
+}
+
+impl ToolFailuresParams {
+    pub fn tool_input_schema() -> ToolInputSchema {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "service".to_string(),
+            string_property("Optional service name filter"),
+        );
+        properties.insert(
+            "tool_name".to_string(),
+            string_property("Optional tool name filter"),
+        );
+        ToolInputSchema::new(Some(properties), vec![])
+    }
+}
+
+impl TryFrom<Option<Map<String, Value>>> for ToolFailuresParams {
+    type Error = InvalidParameters;
+
+    fn try_from(map: Option<Map<String, Value>>) -> std::result::Result<Self, Self::Error> {
+        let mut map = map.unwrap_or_default();
+        let take_string = |map: &mut Map<String, Value>, key: &str| match map.remove(key) {
+            Some(Value::String(value)) => Some(value),
+            _ => None,
+        };
+        Ok(Self {
+            service: take_string(&mut map, "service"),
+            tool_name: take_string(&mut map, "tool_name"),
+        })
+    }
+}
+
+pub struct SearchAiTracesParams {
+    pub filter: otel_worker_core::genai::AiSearchFilter,
+}
+
+impl SearchAiTracesParams {
+    pub fn tool_input_schema() -> ToolInputSchema {
+        let mut properties = HashMap::new();
+        properties.insert("q".to_string(), string_property("Free-text search"));
+        properties.insert(
+            "operation".to_string(),
+            string_property("Operation, e.g. chat or execute_tool"),
+        );
+        properties.insert(
+            "provider".to_string(),
+            string_property("Provider substring, e.g. openai"),
+        );
+        properties.insert(
+            "model".to_string(),
+            string_property("Model substring, e.g. gpt"),
+        );
+        properties.insert(
+            "conversation_id".to_string(),
+            string_property("Exact conversation/session id"),
+        );
+        properties.insert(
+            "has_error".to_string(),
+            bool_property("Only error spans (true) or only ok spans (false)"),
+        );
+        ToolInputSchema::new(Some(properties), vec![])
+    }
+}
+
+impl TryFrom<Option<Map<String, Value>>> for SearchAiTracesParams {
+    type Error = InvalidParameters;
+
+    fn try_from(map: Option<Map<String, Value>>) -> std::result::Result<Self, Self::Error> {
+        let mut map = map.unwrap_or_default();
+        let has_error = match map.remove("has_error") {
+            Some(Value::Bool(value)) => Some(value),
+            _ => None,
+        };
+        let mut take_string = |key: &str| match map.remove(key) {
+            Some(Value::String(value)) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        };
+        Ok(Self {
+            filter: otel_worker_core::genai::AiSearchFilter {
+                query: take_string("q"),
+                operation: take_string("operation"),
+                provider: take_string("provider"),
+                model: take_string("model"),
+                conversation_id: take_string("conversation_id"),
+                has_error,
+                limit: 100,
+            },
+        })
+    }
 }
 
 async fn handle_tool_call(
@@ -457,6 +622,36 @@ async fn handle_tool_call(
     match params.name.as_str() {
         "get_trace" => match params.arguments.try_into() {
             Ok(params) => handle_tool_call_get_trace(state, session, request_id, params).await,
+            Err(_) => {
+                session
+                    .send_error(request_id, JsonrpcErrorError::invalid_params())
+                    .await;
+                Ok(())
+            }
+        },
+        "llm_cost_by_model" => handle_tool_call_llm_cost_by_model(state, session, request_id).await,
+        "agent_run" => match params.arguments.try_into() {
+            Ok(params) => handle_tool_call_agent_run(state, session, request_id, params).await,
+            Err(_) => {
+                session
+                    .send_error(request_id, JsonrpcErrorError::invalid_params())
+                    .await;
+                Ok(())
+            }
+        },
+        "tool_failures" => match params.arguments.try_into() {
+            Ok(params) => handle_tool_call_tool_failures(state, session, request_id, params).await,
+            Err(_) => {
+                session
+                    .send_error(request_id, JsonrpcErrorError::invalid_params())
+                    .await;
+                Ok(())
+            }
+        },
+        "search_ai_traces" => match params.arguments.try_into() {
+            Ok(params) => {
+                handle_tool_call_search_ai_traces(state, session, request_id, params).await
+            }
             Err(_) => {
                 session
                     .send_error(request_id, JsonrpcErrorError::invalid_params())
@@ -538,6 +733,103 @@ async fn handle_tool_call_get_trace(
     );
     session.send_response(request_id, response).await;
     Ok(())
+}
+
+async fn send_json_tool_result<T: Serialize>(
+    session: &McpSession,
+    request_id: RequestId,
+    value: &T,
+) -> std::result::Result<(), anyhow::Error> {
+    let response = CallToolResult::text_content(
+        serde_json::to_string(value).expect("unable to serialize tool result"),
+        None,
+    );
+    session.send_response(request_id, response).await;
+    Ok(())
+}
+
+async fn handle_tool_call_llm_cost_by_model(
+    state: &McpState,
+    session: &McpSession,
+    request_id: RequestId,
+) -> std::result::Result<(), anyhow::Error> {
+    let overview = state.api_client.ai_overview().await?;
+    send_json_tool_result(session, request_id, &overview.by_model).await
+}
+
+async fn handle_tool_call_agent_run(
+    state: &McpState,
+    session: &McpSession,
+    request_id: RequestId,
+    params: GetTraceParams,
+) -> std::result::Result<(), anyhow::Error> {
+    let run = state.api_client.ai_run(params.trace_id).await?;
+    send_json_tool_result(session, request_id, &run).await
+}
+
+async fn handle_tool_call_tool_failures(
+    state: &McpState,
+    session: &McpSession,
+    request_id: RequestId,
+    params: ToolFailuresParams,
+) -> std::result::Result<(), anyhow::Error> {
+    let tools = state.api_client.ai_tools().await?;
+    let health: Vec<_> = tools
+        .iter()
+        .filter(|tool| {
+            params
+                .tool_name
+                .as_deref()
+                .map(|name| tool.tool_name == name)
+                .unwrap_or(true)
+        })
+        .filter(|tool| tool.error_count > 0)
+        .collect();
+
+    // The failing spans themselves, via the same search the UI uses.
+    let failures = state
+        .api_client
+        .ai_search(&otel_worker_core::genai::AiSearchFilter {
+            operation: Some("execute_tool".to_string()),
+            has_error: Some(true),
+            limit: 100,
+            ..Default::default()
+        })
+        .await?;
+    let failing_spans: Vec<_> = failures
+        .iter()
+        .filter(|span| {
+            params
+                .service
+                .as_deref()
+                .map(|service| span.service_name == service)
+                .unwrap_or(true)
+        })
+        .filter(|span| {
+            params
+                .tool_name
+                .as_deref()
+                .map(|name| span.tool_name.as_deref() == Some(name))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    send_json_tool_result(
+        session,
+        request_id,
+        &serde_json::json!({ "tools": health, "failing_spans": failing_spans }),
+    )
+    .await
+}
+
+async fn handle_tool_call_search_ai_traces(
+    state: &McpState,
+    session: &McpSession,
+    request_id: RequestId,
+    params: SearchAiTracesParams,
+) -> std::result::Result<(), anyhow::Error> {
+    let spans = state.api_client.ai_search(&params.filter).await?;
+    send_json_tool_result(session, request_id, &spans).await
 }
 
 #[derive(Debug, Default, Clone, clap::ValueEnum, Serialize, Deserialize)]

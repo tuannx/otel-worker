@@ -4,6 +4,7 @@ pub mod config;
 pub mod control;
 pub mod data;
 pub mod events;
+pub mod genai;
 pub mod otel;
 pub mod query;
 pub mod service;

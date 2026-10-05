@@ -263,3 +263,92 @@ impl SqlBuilder {
         )
     }
 }
+
+impl SqlBuilder {
+    // --- P4: model prices / tenant AI settings / genai projection -----------
+
+    pub fn model_prices_list(&self) -> String {
+        String::from(
+            "SELECT * FROM model_prices ORDER BY provider ASC, model ASC, effective_from ASC",
+        )
+    }
+
+    pub fn model_price_upsert(&self) -> String {
+        String::from(
+            "INSERT INTO model_prices (
+                provider, model, input_per_mtok, output_per_mtok,
+                cache_read_per_mtok, cache_creation_per_mtok, effective_from
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(provider, model, effective_from) DO UPDATE SET
+               input_per_mtok = excluded.input_per_mtok,
+               output_per_mtok = excluded.output_per_mtok,
+               cache_read_per_mtok = excluded.cache_read_per_mtok,
+               cache_creation_per_mtok = excluded.cache_creation_per_mtok
+             RETURNING *",
+        )
+    }
+
+    pub fn tenant_ai_settings_get(&self) -> String {
+        String::from("SELECT id AS tenant_id, capture_content FROM tenants WHERE id=$1")
+    }
+
+    pub fn tenant_ai_settings_upsert(&self) -> String {
+        String::from(
+            "INSERT INTO tenants (id, name, capture_content) VALUES ($1, $1, $2)
+             ON CONFLICT(id) DO UPDATE SET capture_content = excluded.capture_content
+             RETURNING id AS tenant_id, capture_content",
+        )
+    }
+
+    pub fn genai_span_create(&self) -> String {
+        String::from(
+            "INSERT INTO genai_spans (
+                tenant_id, trace_id, span_id, parent_span_id, service_name,
+                span_name, operation, provider, request_model, response_model,
+                agent_name, tool_name, conversation_id, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens,
+                ttft_ms, duration_ms, finish_reasons, cost_usd, price_provider,
+                price_model, price_effective_from, is_error, start_time, end_time
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+             ON CONFLICT(tenant_id, trace_id, span_id) DO UPDATE SET
+               parent_span_id = excluded.parent_span_id,
+               service_name = excluded.service_name,
+               span_name = excluded.span_name,
+               operation = excluded.operation,
+               provider = excluded.provider,
+               request_model = excluded.request_model,
+               response_model = excluded.response_model,
+               agent_name = excluded.agent_name,
+               tool_name = excluded.tool_name,
+               conversation_id = excluded.conversation_id,
+               input_tokens = excluded.input_tokens,
+               output_tokens = excluded.output_tokens,
+               cache_read_tokens = excluded.cache_read_tokens,
+               cache_creation_tokens = excluded.cache_creation_tokens,
+               ttft_ms = excluded.ttft_ms,
+               duration_ms = excluded.duration_ms,
+               finish_reasons = excluded.finish_reasons,
+               cost_usd = excluded.cost_usd,
+               price_provider = excluded.price_provider,
+               price_model = excluded.price_model,
+               price_effective_from = excluded.price_effective_from,
+               is_error = excluded.is_error,
+               start_time = excluded.start_time,
+               end_time = excluded.end_time
+             RETURNING *",
+        )
+    }
+
+    pub fn genai_spans_list(&self, limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(1000);
+        format!(
+            "SELECT * FROM genai_spans WHERE tenant_id=$1 ORDER BY start_time DESC LIMIT {limit}"
+        )
+    }
+
+    pub fn genai_spans_list_by_trace(&self) -> String {
+        String::from(
+            "SELECT * FROM genai_spans WHERE tenant_id=$1 AND trace_id=$2 ORDER BY start_time ASC",
+        )
+    }
+}

@@ -139,6 +139,22 @@ impl ApiClientInner {
         E: Error,
         P: Future<Output = Result<T, ApiClientError<E>>>,
     {
+        self.do_req_with_body(method, path, query, None, response_parser)
+            .await
+    }
+
+    async fn do_req_with_body<T, E, P>(
+        &self,
+        method: Method,
+        path: impl AsRef<str>,
+        query: Option<BTreeMap<&'static str, String>>,
+        body: Option<serde_json::Value>,
+        response_parser: impl FnOnce(reqwest::Response) -> P,
+    ) -> Result<T, ApiClientError<E>>
+    where
+        E: Error,
+        P: Future<Output = Result<T, ApiClientError<E>>>,
+    {
         let mut u = self.base_url.join(path.as_ref())?;
 
         if let Some(query) = query {
@@ -162,6 +178,10 @@ impl ApiClientInner {
         }
 
         req = req.headers(headers);
+
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
 
         // Send the request
         let response = req.send().await?;
@@ -268,6 +288,107 @@ impl ApiClientInner {
         let path = format!("v1/traces/{}/spans/{}", trace_id.as_ref(), span_id.as_ref());
 
         self.do_req(Method::DELETE, path, None, no_body).await
+    }
+
+    // --- P4: AI trace -------------------------------------------------------
+    // These call the same HTTP endpoints the UI uses, so MCP tools and the
+    // browser can never disagree about cost or replay shape.
+
+    /// LLM totals + per-model/provider cost rollup.
+    pub async fn ai_overview(
+        &self,
+    ) -> Result<crate::genai::AiOverview, ApiClientError<CommonError>> {
+        self.do_req(Method::GET, "v1/ai/overview", None, api_result)
+            .await
+    }
+
+    /// One summary row per agent run (trace with GenAI spans), newest first.
+    pub async fn ai_runs(
+        &self,
+    ) -> Result<Vec<crate::genai::AgentRunSummary>, ApiClientError<CommonError>> {
+        self.do_req(Method::GET, "v1/ai/runs", None, api_result)
+            .await
+    }
+
+    /// Full replay of one agent run: span tree with per-step token/cost.
+    pub async fn ai_run(
+        &self,
+        trace_id: impl AsRef<str>,
+    ) -> Result<crate::genai::AgentRun, ApiClientError<CommonError>> {
+        let path = format!("v1/ai/runs/{}", trace_id.as_ref());
+        self.do_req(Method::GET, path, None, api_result).await
+    }
+
+    /// `execute_tool` health: calls, errors, latency percentiles.
+    pub async fn ai_tools(
+        &self,
+    ) -> Result<Vec<crate::genai::ToolHealth>, ApiClientError<CommonError>> {
+        self.do_req(Method::GET, "v1/ai/tools", None, api_result)
+            .await
+    }
+
+    /// Search projected GenAI spans (model/provider/operation/error filters).
+    pub async fn ai_search(
+        &self,
+        filter: &crate::genai::AiSearchFilter,
+    ) -> Result<Vec<crate::genai::GenAiSpanView>, ApiClientError<CommonError>> {
+        let mut map = BTreeMap::new();
+        if let Some(query) = &filter.query {
+            map.insert("q", query.clone());
+        }
+        if let Some(operation) = &filter.operation {
+            map.insert("operation", operation.clone());
+        }
+        if let Some(provider) = &filter.provider {
+            map.insert("provider", provider.clone());
+        }
+        if let Some(model) = &filter.model {
+            map.insert("model", model.clone());
+        }
+        if let Some(conversation_id) = &filter.conversation_id {
+            map.insert("conversation_id", conversation_id.clone());
+        }
+        if let Some(has_error) = filter.has_error {
+            map.insert("has_error", has_error.to_string());
+        }
+        if filter.limit > 0 {
+            map.insert("limit", filter.limit.to_string());
+        }
+        self.do_req(Method::GET, "v1/ai/search", Some(map), api_result)
+            .await
+    }
+
+    pub async fn ai_prices_list(
+        &self,
+    ) -> Result<Vec<crate::data::models::ModelPrice>, ApiClientError<CommonError>> {
+        self.do_req(Method::GET, "v1/ai/prices", None, api_result)
+            .await
+    }
+
+    pub async fn ai_price_upsert(
+        &self,
+        price: &crate::data::models::ModelPrice,
+    ) -> Result<crate::data::models::ModelPrice, ApiClientError<CommonError>> {
+        let body = serde_json::to_value(price)
+            .expect("ModelPrice must serialize for the ai price upsert request");
+        self.do_req_with_body(Method::POST, "v1/ai/prices", None, Some(body), api_result)
+            .await
+    }
+
+    pub async fn ai_settings_get(
+        &self,
+    ) -> Result<crate::data::models::TenantAiSettings, ApiClientError<CommonError>> {
+        self.do_req(Method::GET, "v1/ai/settings", None, api_result)
+            .await
+    }
+
+    pub async fn ai_settings_set_capture_content(
+        &self,
+        capture_content: bool,
+    ) -> Result<crate::data::models::TenantAiSettings, ApiClientError<CommonError>> {
+        let body = serde_json::json!({ "capture_content": capture_content });
+        self.do_req_with_body(Method::PUT, "v1/ai/settings", None, Some(body), api_result)
+            .await
     }
 }
 

@@ -122,6 +122,21 @@ impl Builder {
                 "/v1/alerts/evaluate",
                 post(handlers::control::alerts_evaluate_handler),
             )
+            .route("/v1/ai/overview", get(handlers::ai::ai_overview_handler))
+            .route("/v1/ai/runs", get(handlers::ai::ai_runs_handler))
+            .route("/v1/ai/runs/:trace_id", get(handlers::ai::ai_run_handler))
+            .route("/v1/ai/tools", get(handlers::ai::ai_tools_handler))
+            .route("/v1/ai/search", get(handlers::ai::ai_search_handler))
+            .route(
+                "/v1/ai/prices",
+                get(handlers::ai::ai_prices_list_handler)
+                    .post(handlers::ai::ai_price_upsert_handler),
+            )
+            .route(
+                "/v1/ai/settings",
+                get(handlers::ai::ai_settings_get_handler)
+                    .put(handlers::ai::ai_settings_update_handler),
+            )
             .route(
                 "/v1/services/:service_name/operations",
                 get(handlers::query::service_operations_handler),

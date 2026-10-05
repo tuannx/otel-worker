@@ -520,3 +520,90 @@ pub struct AlertEventRecord {
     pub delivery_status: String,
     pub delivery_error: Option<String>,
 }
+
+/// Price row from the P1 `model_prices` control-plane table. Rates are USD
+/// per 1M tokens; optional cache rates fall back to the input rate at ingest.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModelPrice {
+    pub provider: String,
+    pub model: String,
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
+    pub cache_read_per_mtok: Option<f64>,
+    pub cache_creation_per_mtok: Option<f64>,
+    pub effective_from: Timestamp,
+}
+
+impl ModelPrice {
+    pub fn price_version(&self) -> String {
+        format!(
+            "{}:{}@{}",
+            self.provider,
+            self.model,
+            self.effective_from.fractional()
+        )
+    }
+}
+
+/// Normalized P4 GenAI projection of one span. The raw span remains in
+/// `spans`; this row is the queryable/costed view used by AI APIs and MCP.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GenAiSpanRecord {
+    pub tenant_id: String,
+    pub trace_id: HexEncodedId,
+    pub span_id: HexEncodedId,
+    pub parent_span_id: Option<HexEncodedId>,
+    pub service_name: String,
+    pub span_name: String,
+    pub operation: String,
+    pub provider: String,
+    pub request_model: Option<String>,
+    pub response_model: Option<String>,
+    pub agent_name: Option<String>,
+    pub tool_name: Option<String>,
+    pub conversation_id: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub ttft_ms: Option<f64>,
+    pub duration_ms: f64,
+    pub finish_reasons: String,
+    pub cost_usd: Option<f64>,
+    pub price_provider: Option<String>,
+    pub price_model: Option<String>,
+    pub price_effective_from: Option<Timestamp>,
+    pub is_error: i64,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TenantAiSettings {
+    pub tenant_id: String,
+    pub capture_content: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TenantAiSettingsRecord {
+    pub tenant_id: String,
+    pub capture_content: i64,
+}
+
+impl From<TenantAiSettingsRecord> for TenantAiSettings {
+    fn from(record: TenantAiSettingsRecord) -> Self {
+        Self {
+            tenant_id: record.tenant_id,
+            capture_content: record.capture_content != 0,
+        }
+    }
+}
+
+impl From<&TenantAiSettings> for TenantAiSettingsRecord {
+    fn from(settings: &TenantAiSettings) -> Self {
+        Self {
+            tenant_id: settings.tenant_id.clone(),
+            capture_content: if settings.capture_content { 1 } else { 0 },
+        }
+    }
+}

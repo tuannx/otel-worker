@@ -660,4 +660,187 @@ impl Store for D1Store {
         })
         .await
     }
+
+    async fn model_prices_list(&self, _tx: &Transaction) -> Result<Vec<models::ModelPrice>> {
+        SendFuture::new(async {
+            self.fetch_all(self.sql_builder.model_prices_list(), &[])
+                .await
+        })
+        .await
+    }
+
+    async fn model_price_upsert(
+        &self,
+        _tx: &Transaction,
+        price: models::ModelPrice,
+    ) -> Result<models::ModelPrice> {
+        SendFuture::new(async {
+            let cache_read = match price.cache_read_per_mtok {
+                Some(value) => JsValue::from_f64(value),
+                None => JsValue::null(),
+            };
+            let cache_creation = match price.cache_creation_per_mtok {
+                Some(value) => JsValue::from_f64(value),
+                None => JsValue::null(),
+            };
+            self.fetch_one(
+                self.sql_builder.model_price_upsert(),
+                &[
+                    JsValue::from_str(&price.provider),
+                    JsValue::from_str(&price.model),
+                    JsValue::from_f64(price.input_per_mtok),
+                    JsValue::from_f64(price.output_per_mtok),
+                    cache_read,
+                    cache_creation,
+                    price.effective_from.into(),
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn tenant_ai_settings_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<models::TenantAiSettings> {
+        SendFuture::new(async {
+            let record: Option<models::TenantAiSettingsRecord> = self
+                .fetch_optional(
+                    self.sql_builder.tenant_ai_settings_get(),
+                    &[JsValue::from_str(tenant_id)],
+                )
+                .await?;
+            Ok(record
+                .map(models::TenantAiSettings::from)
+                .unwrap_or(models::TenantAiSettings {
+                    tenant_id: tenant_id.to_string(),
+                    capture_content: false,
+                }))
+        })
+        .await
+    }
+
+    async fn tenant_ai_settings_upsert(
+        &self,
+        _tx: &Transaction,
+        settings: models::TenantAiSettings,
+    ) -> Result<models::TenantAiSettings> {
+        SendFuture::new(async {
+            let record = models::TenantAiSettingsRecord::from(&settings);
+            let saved: models::TenantAiSettingsRecord = self
+                .fetch_one(
+                    self.sql_builder.tenant_ai_settings_upsert(),
+                    &[
+                        JsValue::from_str(&record.tenant_id),
+                        JsValue::from_f64(record.capture_content as f64),
+                    ],
+                )
+                .await?;
+            Ok(saved.into())
+        })
+        .await
+    }
+
+    async fn genai_span_create(
+        &self,
+        _tx: &Transaction,
+        record: models::GenAiSpanRecord,
+    ) -> Result<models::GenAiSpanRecord> {
+        SendFuture::new(async {
+            fn opt_str(value: &Option<String>) -> JsValue {
+                match value {
+                    Some(value) => JsValue::from_str(value),
+                    None => JsValue::null(),
+                }
+            }
+            fn opt_i64(value: Option<i64>) -> JsValue {
+                match value {
+                    Some(value) => JsValue::from_f64(value as f64),
+                    None => JsValue::null(),
+                }
+            }
+            fn opt_f64(value: Option<f64>) -> JsValue {
+                match value {
+                    Some(value) => JsValue::from_f64(value),
+                    None => JsValue::null(),
+                }
+            }
+            let parent_span_id = match &record.parent_span_id {
+                Some(value) => value.clone().into(),
+                None => JsValue::null(),
+            };
+            let price_effective_from = match record.price_effective_from {
+                Some(value) => value.into(),
+                None => JsValue::null(),
+            };
+            self.fetch_one(
+                self.sql_builder.genai_span_create(),
+                &[
+                    JsValue::from_str(&record.tenant_id),
+                    record.trace_id.clone().into(),
+                    record.span_id.clone().into(),
+                    parent_span_id,
+                    JsValue::from_str(&record.service_name),
+                    JsValue::from_str(&record.span_name),
+                    JsValue::from_str(&record.operation),
+                    JsValue::from_str(&record.provider),
+                    opt_str(&record.request_model),
+                    opt_str(&record.response_model),
+                    opt_str(&record.agent_name),
+                    opt_str(&record.tool_name),
+                    opt_str(&record.conversation_id),
+                    opt_i64(record.input_tokens),
+                    opt_i64(record.output_tokens),
+                    opt_i64(record.cache_read_tokens),
+                    opt_i64(record.cache_creation_tokens),
+                    opt_f64(record.ttft_ms),
+                    JsValue::from_f64(record.duration_ms),
+                    JsValue::from_str(&record.finish_reasons),
+                    opt_f64(record.cost_usd),
+                    opt_str(&record.price_provider),
+                    opt_str(&record.price_model),
+                    price_effective_from,
+                    JsValue::from_f64(record.is_error as f64),
+                    record.start_time.into(),
+                    record.end_time.into(),
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn genai_spans_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<models::GenAiSpanRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(
+                self.sql_builder.genai_spans_list(limit),
+                &[JsValue::from_str(tenant_id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn genai_spans_list_by_trace(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        trace_id: &HexEncodedId,
+    ) -> Result<Vec<models::GenAiSpanRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(
+                self.sql_builder.genai_spans_list_by_trace(),
+                &[JsValue::from_str(tenant_id), trace_id.clone().into()],
+            )
+            .await
+        })
+        .await
+    }
 }

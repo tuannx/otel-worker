@@ -31,6 +31,12 @@ by the Worker (see `otel-worker-core/src/sink.rs`):
                   severity_text, body, timestamp, attributes, resource_attributes
 - `metric_samples` — tenant_id, service_name, metric_name, kind, timestamp,
                   value, attributes, resource_attributes
+- `genai_spans` — tenant_id, trace_id, span_id, parent_span_id, service_name,
+                  span_name, operation, provider, request_model, response_model,
+                  agent_name, tool_name, conversation_id, input/output/cache
+                  tokens, ttft_ms, duration_ms, finish_reasons, cost_usd,
+                  price_version, is_error, start_ts, end_ts (P4 projection;
+                  prompt/completion content is never published)
 
 Partitioning: by day on the timestamp column, secondary `service_name`.
 Retention: Basin Catalog snapshot expiration + R2 lifecycle (set at creation).
@@ -40,8 +46,9 @@ Retention: Basin Catalog snapshot expiration + R2 lifecycle (set at creation).
 Pipelines SQL is row-level only (no GROUP BY). Keep transforms 1:1: select the
 stream fields through unchanged; all aggregation happens later in Basin SQL
 at query time (P2). The files `spans.sql`, `logs.sql`, `metric_samples.sql`
-in this directory hold the per-signal transform statements to paste into the
-pipeline definition once stream/sink names exist in the account.
+and `genai_spans.sql` in this directory hold the per-signal transform
+statements to paste into the pipeline definition once stream/sink names
+exist in the account.
 
 ## Gate for this layer (cannot pass until account exists)
 
