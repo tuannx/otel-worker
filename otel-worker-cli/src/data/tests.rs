@@ -267,6 +267,181 @@ async fn services_summary_from_spans() {
     assert!((services[0].avg_ms - 25.0).abs() < 0.01);
 }
 
+/// P3: dashboards are idempotently imported and alerts fire at most once
+/// inside a pinned cooldown window.
+#[test(tokio::test)]
+async fn p3_dashboards_alerts_and_service_map() {
+    use otel_worker_core::alerting::evaluate_alerts;
+    use otel_worker_core::control::{build_service_map, dashboard_config_hash, AlertRule};
+    use otel_worker_core::data::models::{AlertRuleRecord, DashboardRecord};
+    use otel_worker_core::data::util::Timestamp;
+
+    let store = create_test_store().await;
+    let tx = store
+        .start_readwrite_transaction()
+        .await
+        .expect("unable to create transaction");
+    let now: Timestamp = time::OffsetDateTime::now_utc().into();
+
+    let config: serde_json::Value =
+        serde_json::from_str(r#"{"version":1,"panels":[{"type":"services"}]}"#).unwrap();
+    let config_text = otel_worker_core::control::canonical_json(&config);
+    let dashboard = DashboardRecord {
+        id: "dashboard-overview".to_string(),
+        tenant_id: "default".to_string(),
+        name: "Overview".to_string(),
+        config: config_text,
+        config_hash: dashboard_config_hash(&config),
+        created_at: now,
+        updated_at: now,
+    };
+    let saved = store
+        .dashboard_upsert(&tx, dashboard.clone())
+        .await
+        .expect("unable to save dashboard");
+    assert_eq!(saved.config_hash, dashboard.config_hash);
+
+    // Re-importing the same id + config yields the same persisted hash.
+    let saved_again = store
+        .dashboard_upsert(&tx, dashboard)
+        .await
+        .expect("unable to re-save dashboard");
+    assert_eq!(saved_again.config_hash, saved.config_hash);
+
+    let dashboards = store
+        .dashboards_list(&tx, "default")
+        .await
+        .expect("unable to list dashboards");
+    assert_eq!(dashboards.len(), 1);
+
+    // One web root and one erroring checkout child, inside the alert window.
+    let trace_id = HexEncodedId::new("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+    let root_id = HexEncodedId::new("0000000000000001").unwrap();
+    let child_id = HexEncodedId::new("0000000000000002").unwrap();
+    let start = time::OffsetDateTime::now_utc() - time::Duration::seconds(10);
+    for (span_id, parent_span_id, service, name, error) in [
+        (root_id.clone(), None, "web", "GET /", false),
+        (
+            child_id.clone(),
+            Some(root_id.clone()),
+            "checkout",
+            "POST /pay",
+            true,
+        ),
+    ] {
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            "service.name".to_string(),
+            Some(otel_worker_core::api::models::AttributeValue::StringValue(
+                service.to_string(),
+            )),
+        );
+        let inner_span = otel_worker_core::api::models::Span {
+            trace_id: trace_id.clone(),
+            span_id,
+            parent_span_id,
+            name: name.to_string(),
+            kind: Some(SpanKind::Server),
+            start_time: start,
+            end_time: start + time::Duration::milliseconds(50),
+            trace_state: Some(String::new()),
+            flags: Some(0),
+            scope_name: None,
+            scope_version: None,
+            attributes: AttributeMap::default(),
+            scope_attributes: None,
+            resource_attributes: Some(otel_worker_core::api::models::AttributeMap(attrs)),
+            status: Some(opentelemetry_proto::tonic::trace::v1::Status {
+                message: if error {
+                    "failed".to_string()
+                } else {
+                    String::new()
+                },
+                code: if error { 2 } else { 1 },
+            }),
+            events: vec![],
+            links: vec![],
+        };
+        let span: Span = inner_span.into();
+        assert_eq!(span.service_name, service);
+        store
+            .span_create(&tx, span)
+            .await
+            .expect("unable to create P3 span");
+    }
+
+    // The stored `inner` JSON determines `is_error`; exercise the real service
+    // map projection rather than hand-built rows.
+    let rows = store
+        .spans_service_rows(&tx)
+        .await
+        .expect("unable to read P3 service rows");
+    assert_eq!(rows.len(), 2);
+    let map = build_service_map(&rows);
+    assert_eq!(map.nodes.len(), 2);
+    assert_eq!(map.edges.len(), 1);
+    assert_eq!(map.edges[0].source, "web");
+    assert_eq!(map.edges[0].target, "checkout");
+    assert_eq!(rows[1].is_error, 1);
+
+    let rule = AlertRule {
+        id: "alert-checkout-errors".to_string(),
+        tenant_id: "default".to_string(),
+        name: "Checkout errors".to_string(),
+        service_name: Some("checkout".to_string()),
+        metric: otel_worker_core::control::AlertMetric::ErrorRate,
+        operator: otel_worker_core::control::ComparisonOperator::Gt,
+        threshold: 0.05,
+        window_seconds: 300,
+        cooldown_seconds: 600,
+        webhook_url: None,
+        enabled: true,
+        created_at: now,
+        updated_at: now,
+        last_fired_at: None,
+    };
+    store
+        .alert_rule_upsert(&tx, AlertRuleRecord::from(&rule))
+        .await
+        .expect("unable to save alert rule");
+    store
+        .commit_transaction(tx)
+        .await
+        .expect("unable to commit P3 test data");
+
+    let boxed_store: otel_worker_core::data::BoxedStore = std::sync::Arc::new(store.clone());
+    // The checkout span is an error, so error_rate is exactly 1.0 and the
+    // rule threshold (> 5%) must fire.
+    let first = evaluate_alerts(&boxed_store, "default", Timestamp::now())
+        .await
+        .expect("first alert evaluation failed");
+    let first_events: Vec<_> = first.iter().filter(|result| result.fired).collect();
+
+    let second = evaluate_alerts(&boxed_store, "default", Timestamp::now())
+        .await
+        .expect("second alert evaluation failed");
+    let second_fired = second.iter().filter(|result| result.fired).count();
+
+    let tx = store
+        .start_readonly_transaction()
+        .await
+        .expect("unable to create read transaction");
+    let events = store
+        .alert_events_list(&tx, "default", Some(10))
+        .await
+        .expect("unable to list alert events");
+    // Cooldown contract: evaluating twice in the same window creates exactly
+    // one persisted event for this rule; the second evaluation is suppressed.
+    assert_eq!(first_events.len(), 1);
+    assert_eq!(first_events[0].observed_value, Some(1.0));
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].suppressed_reason.as_deref(), Some("cooldown"));
+    assert_eq!(second_fired, 0);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].rule_id, "alert-checkout-errors");
+    assert_eq!(events[0].observed_value, 1.0);
+}
+
 pub async fn create_test_store() -> LibsqlStore {
     let store = LibsqlStore::in_memory()
         .await

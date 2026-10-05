@@ -88,6 +88,41 @@ impl Builder {
             )
             .route("/v1/services", get(handlers::query::services_list_handler))
             .route(
+                "/v1/service-map",
+                get(handlers::control::service_map_handler),
+            )
+            .route(
+                "/v1/dashboards",
+                get(handlers::control::dashboards_list_handler)
+                    .post(handlers::control::dashboard_upsert_handler),
+            )
+            .route(
+                "/v1/dashboards/import",
+                post(handlers::control::dashboards_import_handler),
+            )
+            .route(
+                "/v1/dashboards/:id",
+                get(handlers::control::dashboard_get_handler)
+                    .delete(handlers::control::dashboard_delete_handler),
+            )
+            .route(
+                "/v1/alert-rules",
+                get(handlers::control::alert_rules_list_handler)
+                    .post(handlers::control::alert_rule_upsert_handler),
+            )
+            .route(
+                "/v1/alert-rules/:id",
+                axum::routing::delete(handlers::control::alert_rule_delete_handler),
+            )
+            .route(
+                "/v1/alert-events",
+                get(handlers::control::alert_events_list_handler),
+            )
+            .route(
+                "/v1/alerts/evaluate",
+                post(handlers::control::alerts_evaluate_handler),
+            )
+            .route(
                 "/v1/services/:service_name/operations",
                 get(handlers::query::service_operations_handler),
             )

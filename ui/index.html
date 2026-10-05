@@ -9,7 +9,13 @@
   body { font-family: ui-monospace, Menlo, monospace; margin: 0; background: #0b0e14; color: #d6deeb; }
   header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: #11151f; position: sticky; top: 0; }
   header b { color: #82aaff; }
-  input, button { background: #1a2030; color: #d6deeb; border: 1px solid #2a3350; border-radius: 6px; padding: 6px 8px; }
+  input, button, select, textarea { background: #1a2030; color: #d6deeb; border: 1px solid #2a3350; border-radius: 6px; padding: 6px 8px; }
+  textarea { width: 100%; min-height: 130px; box-sizing: border-box; font: inherit; font-size: 12px; }
+  label { display: grid; gap: 4px; font-size: 12px; color: #9aa7c7; }
+  .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; margin: 12px 0; }
+  .card { background: #11151f; border: 1px solid #1c2338; border-radius: 8px; padding: 12px; margin: 12px 0; }
+  svg text { fill: #d6deeb; font-size: 12px; }
+  svg .edge-label { fill: #9aa7c7; font-size: 10px; }
   button { cursor: pointer; } button.active { background: #82aaff; color: #0b0e14; }
   main { padding: 14px; max-width: 1200px; margin: 0 auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -40,12 +46,18 @@
   <button data-view="traces" class="nav">Traces</button>
   <button data-view="logs" class="nav">Logs</button>
   <button data-view="metrics" class="nav">Metrics</button>
+  <button data-view="map" class="nav">Map</button>
+  <button data-view="dashboards" class="nav">Dashboards</button>
+  <button data-view="alerts" class="nav">Alerts</button>
 </header>
 <main>
   <section id="view-services"></section>
   <section id="view-traces" hidden></section>
   <section id="view-logs" hidden></section>
   <section id="view-metrics" hidden></section>
+  <section id="view-map" hidden></section>
+  <section id="view-dashboards" hidden></section>
+  <section id="view-alerts" hidden></section>
   <section id="view-trace" hidden></section>
 </main>
 <script>
@@ -54,11 +66,20 @@ let base = localStorage.getItem('cf-signoz-base') || '';
 let token = sessionStorage.getItem('cf-signoz-token') || '';
 $('base').value = base; $('token').value = token;
 
-async function api(path) {
-  const res = await fetch(base + path, { headers: { 'Authorization': 'Bearer ' + token } });
+async function api(path, options = {}) {
+  const res = await fetch(base + path, {
+    ...options,
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
   if (!res.ok) throw new Error(path + ' -> HTTP ' + res.status);
+  if (res.status === 204) return null;
   return res.json();
 }
+const apiWrite = (path, method, body) => api(path, { method, body: body == null ? undefined : JSON.stringify(body) });
 const ms = (v) => (v == null ? '-' : Number(v).toFixed(1) + ' ms');
 const pct = (v) => (Number(v || 0) * 100).toFixed(1) + '%';
 const when = (sec) => sec ? new Date(sec * 1000).toLocaleString() : '-';
@@ -66,8 +87,8 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','
 
 function show(view) {
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-  ['services','traces','logs','metrics','trace'].forEach(v => $('view-' + v).hidden = v !== view);
-  ({services: loadServices, traces: loadTraces, logs: loadLogs, metrics: loadMetrics}[view] || (() => {}))()
+  ['services','traces','logs','metrics','map','dashboards','alerts','trace'].forEach(v => $('view-' + v).hidden = v !== view);
+  ({services: loadServices, traces: loadTraces, logs: loadLogs, metrics: loadMetrics, map: loadMap, dashboards: loadDashboards, alerts: loadAlerts}[view] || (() => {}))()
     .catch(e => { $('status').textContent = e.message; $('status').className = 'err'; });
 }
 
@@ -151,6 +172,146 @@ async function loadMetrics() {
       <td>${m.sample_count}</td><td>${Number(m.avg).toFixed(2)}</td><td>${Number(m.min).toFixed(2)}</td><td>${Number(m.max).toFixed(2)}</td><td>${Number(m.last_value).toFixed(2)}</td></tr>`).join('')}
     </table>` : '<p class="dim">No metric samples yet. Send to /v1/metrics.</p>');
 }
+
+function serviceTable(services) {
+  if (!services.length) return '<p class="dim">No service data yet.</p>';
+  return `<table><tr><th>Service</th><th>Spans</th><th>Errors</th><th>Error rate</th><th>p95</th></tr>
+    ${services.map(s => `<tr><td>${esc(s.service_name)}</td><td>${s.span_count}</td><td class="${s.error_count ? 'err' : ''}">${s.error_count}</td><td>${pct(s.error_rate)}</td><td>${ms(s.p95_ms)}</td></tr>`).join('')}</table>`;
+}
+
+async function loadMap() {
+  const map = await api('/v1/service-map');
+  const cols = Math.max(1, Math.ceil(Math.sqrt(map.nodes.length || 1)));
+  const width = Math.max(680, cols * 230);
+  const height = Math.max(240, Math.ceil((map.nodes.length || 1) / cols) * 120 + 40);
+  const pos = new Map(map.nodes.map((node, i) => [node.service_name, { x: 110 + (i % cols) * 220, y: 55 + Math.floor(i / cols) * 115 }]));
+  const lines = map.edges.map(edge => {
+    const a = pos.get(edge.source), b = pos.get(edge.target);
+    if (!a || !b) return '';
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#82aaff" stroke-width="1.5" marker-end="url(#arrow)"/><text class="edge-label" x="${mx}" y="${my - 4}">${edge.call_count} calls · ${pct(edge.error_rate)}</text>`;
+  }).join('');
+  const circles = map.nodes.map(node => {
+    const p = pos.get(node.service_name);
+    return `<circle cx="${p.x}" cy="${p.y}" r="27" fill="${node.error_count ? '#3a1622' : '#16233a'}" stroke="${node.error_count ? '#ff6b81' : '#82aaff'}"/><text x="${p.x}" y="${p.y - 2}" text-anchor="middle">${esc(node.service_name)}</text><text class="edge-label" x="${p.x}" y="${p.y + 14}" text-anchor="middle">p95 ${ms(node.p95_ms)}</text>`;
+  }).join('');
+  $('view-map').innerHTML = `<h2>Service map</h2>
+    ${map.nodes.length ? `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#82aaff"/></marker></defs>${lines}${circles}</svg>` : '<p class="dim">No spans yet.</p>'}
+    <h2>Edges</h2>${map.edges.length ? `<table><tr><th>Source</th><th>Target</th><th>Calls</th><th>Errors</th><th>Error rate</th><th>avg child duration</th><th>p95 child duration</th></tr>
+    ${map.edges.map(e => `<tr><td>${esc(e.source)}</td><td>${esc(e.target)}</td><td>${e.call_count}</td><td>${e.error_count}</td><td>${pct(e.error_rate)}</td><td>${ms(e.avg_duration_ms)}</td><td>${ms(e.p95_duration_ms)}</td></tr>`).join('')}</table>` : '<p class="dim">No cross-service parent/child edges found.</p>'}`;
+}
+
+let dashboardCache = [];
+
+async function renderDashboardPanels(board) {
+  const panels = Array.isArray(board?.config?.panels) ? board.config.panels : [];
+  if (!panels.length) return '<p class="dim">This dashboard has no panels. Supported panel types: services, service_map, metrics_summary.</p>';
+  const rendered = [];
+  for (const panel of panels) {
+    if (panel.type === 'services') {
+      rendered.push(`<div class="card"><h2>${esc(panel.title || 'Services')}</h2>${serviceTable(await api('/v1/services'))}</div>`);
+    } else if (panel.type === 'service_map') {
+      const map = await api('/v1/service-map');
+      rendered.push(`<div class="card"><h2>${esc(panel.title || 'Service map')}</h2><p>${map.nodes.length} services · ${map.edges.length} cross-service edges</p><p><button onclick="show('map')">Open full map</button></p></div>`);
+    } else if (panel.type === 'metrics_summary') {
+      const metrics = await api('/v1/metrics/summary');
+      rendered.push(`<div class="card"><h2>${esc(panel.title || 'Metrics')}</h2>${metrics.length ? `<table><tr><th>Service</th><th>Metric</th><th>Samples</th><th>avg</th><th>last</th></tr>${metrics.map(m => `<tr><td>${esc(m.service_name)}</td><td>${esc(m.metric_name)}</td><td>${m.sample_count}</td><td>${Number(m.avg).toFixed(2)}</td><td>${Number(m.last_value).toFixed(2)}</td></tr>`).join('')}</table>` : '<p class="dim">No metric samples.</p>'}</div>`);
+    } else {
+      rendered.push(`<div class="card"><h2>${esc(panel.title || panel.type || 'Panel')}</h2><p class="err">Unsupported panel type: ${esc(panel.type || '')}</p></div>`);
+    }
+  }
+  return rendered.join('');
+}
+
+async function loadDashboards(selectedId) {
+  dashboardCache = await api('/v1/dashboards');
+  const selected = dashboardCache.find(d => d.id === selectedId) || dashboardCache[0];
+  $('view-dashboards').innerHTML = `<h2>Dashboards</h2>
+    <div class="form">
+      <label>Name<input id="dash-name" value="${esc(selected?.name || 'Service overview')}"></label>
+      <label>Open dashboard<select id="dash-select">${dashboardCache.map(d => `<option value="${esc(d.id)}" ${selected?.id === d.id ? 'selected' : ''}>${esc(d.name)} (${esc(d.id)})</option>`).join('')}</select></label>
+      <button id="dash-load">Open</button><button id="dash-sample">Create sample</button>
+      <button id="dash-save">Save config</button><button id="dash-export">Export</button><button id="dash-import">Import</button>
+      ${selected ? '<button id="dash-delete">Delete</button>' : ''}
+    </div>
+    ${selected ? `<p class="dim">id: ${esc(selected.id)} · config_hash: ${esc(selected.config_hash)} · updated: ${when(selected.updated_at)}</p>` : '<p class="dim">No dashboards yet.</p>'}
+    <label>Dashboard JSON<textarea id="dash-json">${esc(selected ? JSON.stringify(selected.config, null, 2) : JSON.stringify({version:1,panels:[{type:'services',title:'Services'},{type:'service_map',title:'Dependencies'},{type:'metrics_summary',title:'Metrics'}]}, null, 2))}</textarea></label>
+    <div id="dash-panels">${selected ? await renderDashboardPanels(selected) : ''}</div>`;
+
+  $('dash-load').onclick = () => loadDashboards($('dash-select').value).catch(showError);
+  $('dash-sample').onclick = async () => {
+    const board = await apiWrite('/v1/dashboards', 'POST', { name: 'Service overview', config: { version: 1, panels: [{type:'services',title:'Services'},{type:'service_map',title:'Dependencies'},{type:'metrics_summary',title:'Metrics'}] } });
+    await loadDashboards(board.id);
+  };
+  $('dash-save').onclick = async () => {
+    let config;
+    try { config = JSON.parse($('dash-json').value); } catch (e) { throw new Error('Dashboard JSON is invalid: ' + e.message); }
+    const board = await apiWrite('/v1/dashboards', 'POST', { id: selected?.id, name: $('dash-name').value, config });
+    await loadDashboards(board.id);
+  };
+  $('dash-export').onclick = () => {
+    if (!selected) return;
+    $('dash-json').value = JSON.stringify({ dashboards: [{ id: selected.id, name: selected.name, config: selected.config }] }, null, 2);
+    $('dash-json').select();
+  };
+  $('dash-import').onclick = async () => {
+    const parsed = JSON.parse($('dash-json').value);
+    const payload = Array.isArray(parsed.dashboards) ? parsed : { dashboards: [parsed] };
+    const imported = await apiWrite('/v1/dashboards/import', 'POST', payload);
+    await loadDashboards(imported[0]?.id);
+  };
+  if (selected) $('dash-delete').onclick = async () => { await apiWrite('/v1/dashboards/' + encodeURIComponent(selected.id), 'DELETE'); await loadDashboards(); };
+}
+
+async function loadAlerts() {
+  const [rules, events] = await Promise.all([api('/v1/alert-rules'), api('/v1/alert-events?limit=50')]);
+  $('view-alerts').innerHTML = `<h2>Alerts</h2>
+    <div class="card"><h2>New / update rule</h2><div class="form">
+      <label>Name<input id="alert-name" value="Checkout error rate"></label>
+      <label>Service (blank = all)<input id="alert-service" value="checkout"></label>
+      <label>Metric<select id="alert-metric"><option value="error_rate">error_rate (0–1)</option><option value="p95_ms">p95_ms</option><option value="span_count">span_count</option></select></label>
+      <label>Operator<select id="alert-operator"><option>&gt;</option><option>&gt;=</option><option>&lt;</option><option>&lt;=</option><option>==</option></select></label>
+      <label>Threshold<input id="alert-threshold" type="number" step="any" value="0.05"></label>
+      <label>Window seconds<input id="alert-window" type="number" value="300"></label>
+      <label>Cooldown seconds<input id="alert-cooldown" type="number" value="600"></label>
+      <label>Webhook URL<input id="alert-webhook" placeholder="https://hooks.example/..."></label>
+      <label>Enabled<select id="alert-enabled"><option value="true">true</option><option value="false">false</option></select></label>
+      <button id="alert-save">Save rule</button><button id="alert-evaluate">Evaluate now</button>
+    </div><p class="dim">Worker Cron runs every 5 minutes; “Evaluate now” uses the same deterministic evaluator and records events immediately. Webhook delivery happens on the Cron path and is stored on each event.</p>
+    <pre id="alert-result" hidden></pre></div>
+    <h2>Rules (${rules.length})</h2>${rules.length ? `<table><tr><th>Name</th><th>Service</th><th>Condition</th><th>Window</th><th>Cooldown</th><th>Enabled</th><th>Webhook</th><th>Last fired</th><th></th></tr>
+      ${rules.map(r => `<tr><td>${esc(r.name)}<br><span class="dim">${esc(r.id)}</span></td><td>${esc(r.service_name || '*')}</td><td>${esc(r.metric)} ${esc(r.operator)} ${r.threshold}</td><td>${r.window_seconds}s</td><td>${r.cooldown_seconds}s</td><td>${r.enabled}</td><td>${r.webhook_url ? 'yes' : 'no'}</td><td>${when(r.last_fired_at)}</td><td><button data-delete-rule="${esc(r.id)}">Delete</button></td></tr>`).join('')}</table>` : '<p class="dim">No alert rules yet.</p>'}
+    <h2>Events (${events.length})</h2>${events.length ? `<table><tr><th>Fired</th><th>Rule</th><th>Service</th><th>Observed</th><th>Threshold</th><th>Status</th><th>Delivery</th></tr>
+      ${events.map(e => `<tr><td class="dim">${when(e.fired_at)}</td><td>${esc(e.rule_id)}</td><td>${esc(e.service_name)}</td><td>${Number(e.observed_value).toFixed(4)}</td><td>${esc(e.metric)} ${esc(e.operator)} ${e.threshold}</td><td class="err">${esc(e.status)}</td><td>${esc(e.delivery_status)}${e.delivery_error ? ' · ' + esc(e.delivery_error) : ''}</td></tr>`).join('')}</table>` : '<p class="dim">No alert events.</p>'}`;
+
+  $('alert-save').onclick = async () => {
+    await apiWrite('/v1/alert-rules', 'POST', {
+      name: $('alert-name').value,
+      service_name: $('alert-service').value || null,
+      metric: $('alert-metric').value,
+      operator: $('alert-operator').value,
+      threshold: Number($('alert-threshold').value),
+      window_seconds: Number($('alert-window').value),
+      cooldown_seconds: Number($('alert-cooldown').value),
+      webhook_url: $('alert-webhook').value || null,
+      enabled: $('alert-enabled').value === 'true',
+    });
+    await loadAlerts();
+  };
+  $('alert-evaluate').onclick = async () => {
+    const results = await apiWrite('/v1/alerts/evaluate', 'POST');
+    $('alert-result').hidden = false;
+    $('alert-result').textContent = JSON.stringify(results, null, 2);
+    setTimeout(() => loadAlerts().catch(showError), 250);
+  };
+  document.querySelectorAll('[data-delete-rule]').forEach(button => button.onclick = async () => {
+    await apiWrite('/v1/alert-rules/' + encodeURIComponent(button.dataset.deleteRule), 'DELETE');
+    await loadAlerts();
+  });
+}
+
+function showError(e) { $('status').textContent = e.message; $('status').className = 'err'; }
+
 
 $('save').onclick = () => {
   base = $('base').value.replace(/\/$/, ''); token = $('token').value;

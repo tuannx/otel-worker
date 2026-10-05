@@ -1,3 +1,4 @@
+pub mod control;
 pub mod otel;
 pub mod query;
 pub mod signals;

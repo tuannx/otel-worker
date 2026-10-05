@@ -1,5 +1,7 @@
+pub mod alerting;
 pub mod api;
 pub mod config;
+pub mod control;
 pub mod data;
 pub mod events;
 pub mod otel;

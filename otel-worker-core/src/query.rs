@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ServiceSpanRow {
+    pub trace_id: crate::data::models::HexEncodedId,
+    pub span_id: crate::data::models::HexEncodedId,
+    pub parent_span_id: Option<crate::data::models::HexEncodedId>,
     pub service_name: String,
     pub name: String,
     pub start_time: crate::data::util::Timestamp,

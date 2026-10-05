@@ -74,11 +74,12 @@ impl SqlBuilder {
         )
     }
 
-    /// Raw rows for service/operation summaries (P2). Percentiles are computed
-    /// in Rust (core::query) so D1, libsql and Basin agree on the definition.
+    /// Raw rows for service/operation summaries and the P3 service map.
+    /// Percentiles are computed in Rust (core::query) so D1, libsql and Basin
+    /// agree on the definition.
     pub fn spans_service_rows(&self) -> String {
         String::from(
-            "SELECT service_name, name, start_time, end_time, \
+            "SELECT trace_id, span_id, parent_span_id, service_name, name, start_time, end_time, \
              CASE WHEN json_extract(inner, '$.status.code') = 2 THEN 1 ELSE 0 END AS is_error \
              FROM spans ORDER BY start_time ASC",
         )
@@ -163,5 +164,102 @@ impl SqlBuilder {
 
     pub fn api_key_get(&self) -> String {
         String::from("SELECT * FROM api_keys WHERE key_hash=$1 AND revoked_at IS NULL")
+    }
+}
+
+impl SqlBuilder {
+    pub fn dashboard_upsert(&self) -> String {
+        String::from(
+            "INSERT INTO dashboards (id, tenant_id, name, config, config_hash, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(id) DO UPDATE SET
+               tenant_id = excluded.tenant_id,
+               name = excluded.name,
+               config = excluded.config,
+               config_hash = excluded.config_hash,
+               updated_at = excluded.updated_at
+             RETURNING *",
+        )
+    }
+
+    pub fn dashboards_list(&self) -> String {
+        String::from("SELECT * FROM dashboards WHERE tenant_id=$1 ORDER BY name ASC, id ASC")
+    }
+
+    pub fn dashboard_get(&self) -> String {
+        String::from("SELECT * FROM dashboards WHERE tenant_id=$1 AND id=$2")
+    }
+
+    pub fn dashboard_delete(&self) -> String {
+        String::from("DELETE FROM dashboards WHERE tenant_id=$1 AND id=$2")
+    }
+
+    pub fn alert_rule_upsert(&self) -> String {
+        String::from(
+            "INSERT INTO alert_rules (
+                id, tenant_id, name, service_name, metric, operator, threshold,
+                window_seconds, cooldown_seconds, webhook_url, enabled,
+                created_at, updated_at, last_fired_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT(id) DO UPDATE SET
+               tenant_id = excluded.tenant_id,
+               name = excluded.name,
+               service_name = excluded.service_name,
+               metric = excluded.metric,
+               operator = excluded.operator,
+               threshold = excluded.threshold,
+               window_seconds = excluded.window_seconds,
+               cooldown_seconds = excluded.cooldown_seconds,
+               webhook_url = excluded.webhook_url,
+               enabled = excluded.enabled,
+               updated_at = excluded.updated_at
+             RETURNING *",
+        )
+    }
+
+    pub fn alert_rules_list(&self) -> String {
+        String::from("SELECT * FROM alert_rules WHERE tenant_id=$1 ORDER BY name ASC, id ASC")
+    }
+
+    pub fn alert_rule_get(&self) -> String {
+        String::from("SELECT * FROM alert_rules WHERE tenant_id=$1 AND id=$2")
+    }
+
+    pub fn alert_rule_delete(&self) -> String {
+        String::from("DELETE FROM alert_rules WHERE tenant_id=$1 AND id=$2")
+    }
+
+    pub fn alert_rule_mark_fired(&self) -> String {
+        String::from(
+            "WITH input(tenant_id, rule_id, fired_at) AS (SELECT $1, $2, $3) UPDATE alert_rules SET last_fired_at=(SELECT fired_at FROM input), updated_at=(SELECT fired_at FROM input) WHERE tenant_id=(SELECT tenant_id FROM input) AND id=(SELECT rule_id FROM input)",
+        )
+    }
+
+    pub fn alert_event_create(&self) -> String {
+        String::from(
+            "INSERT INTO alert_events (
+                id, rule_id, tenant_id, service_name, metric, operator, threshold,
+                observed_value, window_seconds, fired_at, status, webhook_url,
+                delivery_status, delivery_error
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             RETURNING *",
+        )
+    }
+
+    pub fn alert_events_list(&self, limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(100);
+        format!(
+            "SELECT * FROM alert_events WHERE tenant_id=$1 ORDER BY fired_at DESC LIMIT {limit}"
+        )
+    }
+
+    pub fn alert_event_get(&self) -> String {
+        String::from("SELECT * FROM alert_events WHERE id=$1")
+    }
+
+    pub fn alert_event_update_delivery(&self) -> String {
+        String::from(
+            "WITH input(event_id, delivery_status, delivery_error) AS (SELECT $1, $2, $3) UPDATE alert_events SET delivery_status=(SELECT delivery_status FROM input), delivery_error=(SELECT delivery_error FROM input) WHERE id=(SELECT event_id FROM input)",
+        )
     }
 }

@@ -2,6 +2,11 @@ name = "otel-worker"
 main = "build/worker/shim.mjs"
 compatibility_date = "2024-07-30"
 
+# P3: evaluate alert rules every 5 minutes. POST /v1/alerts/evaluate remains
+# available for an immediate, deterministic manual evaluation.
+[triggers]
+crons = ["*/5 * * * *"]
+
 [dev]
 port = 24318
 

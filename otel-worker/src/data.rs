@@ -60,6 +60,51 @@ impl D1Store {
 
         Ok(result)
     }
+
+    async fn fetch_optional<T>(
+        &self,
+        query: impl Into<String>,
+        values: &[JsValue],
+    ) -> Result<Option<T>>
+    where
+        T: for<'a> Deserialize<'a>,
+    {
+        let prepared_statement = self
+            .database
+            .prepare(query)
+            .bind(values)
+            .map_err(|err| DbError::InternalError(err.to_string()))?;
+
+        let result = prepared_statement
+            .first(None)
+            .await
+            .map_err(|err| DbError::InternalError(err.to_string()))?;
+
+        Ok(result)
+    }
+
+    async fn execute(&self, query: impl Into<String>, values: &[JsValue]) -> Result<Option<u64>> {
+        let prepared_statement = self
+            .database
+            .prepare(query)
+            .bind(values)
+            .map_err(|err| DbError::InternalError(err.to_string()))?;
+
+        let results = prepared_statement
+            .run()
+            .await
+            .map_err(|err| DbError::InternalError(err.to_string()))?;
+
+        if let Ok(Some(D1ResultMeta {
+            rows_written: Some(rows_written),
+            ..
+        })) = results.meta()
+        {
+            Ok(Some(rows_written as u64))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[async_trait]
@@ -323,6 +368,282 @@ impl Store for D1Store {
         SendFuture::new(async {
             self.fetch_all(self.sql_builder.spans_service_rows(), &[])
                 .await
+        })
+        .await
+    }
+
+    async fn dashboard_upsert(
+        &self,
+        _tx: &Transaction,
+        dashboard: models::DashboardRecord,
+    ) -> Result<models::DashboardRecord> {
+        SendFuture::new(async {
+            self.fetch_one(
+                self.sql_builder.dashboard_upsert(),
+                &[
+                    JsValue::from_str(&dashboard.id),
+                    JsValue::from_str(&dashboard.tenant_id),
+                    JsValue::from_str(&dashboard.name),
+                    JsValue::from_str(&dashboard.config),
+                    JsValue::from_str(&dashboard.config_hash),
+                    dashboard.created_at.into(),
+                    dashboard.updated_at.into(),
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn dashboards_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<Vec<models::DashboardRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(
+                self.sql_builder.dashboards_list(),
+                &[JsValue::from_str(tenant_id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn dashboard_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<models::DashboardRecord>> {
+        SendFuture::new(async {
+            self.fetch_optional(
+                self.sql_builder.dashboard_get(),
+                &[JsValue::from_str(tenant_id), JsValue::from_str(id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn dashboard_delete(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<u64>> {
+        SendFuture::new(async {
+            self.execute(
+                self.sql_builder.dashboard_delete(),
+                &[JsValue::from_str(tenant_id), JsValue::from_str(id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_rule_upsert(
+        &self,
+        _tx: &Transaction,
+        rule: models::AlertRuleRecord,
+    ) -> Result<models::AlertRuleRecord> {
+        SendFuture::new(async {
+            let service_name = match &rule.service_name {
+                Some(value) => JsValue::from_str(value),
+                None => JsValue::null(),
+            };
+            let webhook_url = match &rule.webhook_url {
+                Some(value) => JsValue::from_str(value),
+                None => JsValue::null(),
+            };
+            let last_fired_at = match rule.last_fired_at {
+                Some(value) => value.into(),
+                None => JsValue::null(),
+            };
+            self.fetch_one(
+                self.sql_builder.alert_rule_upsert(),
+                &[
+                    JsValue::from_str(&rule.id),
+                    JsValue::from_str(&rule.tenant_id),
+                    JsValue::from_str(&rule.name),
+                    service_name,
+                    JsValue::from_str(&rule.metric),
+                    JsValue::from_str(&rule.operator),
+                    JsValue::from_f64(rule.threshold),
+                    JsValue::from_f64(rule.window_seconds as f64),
+                    JsValue::from_f64(rule.cooldown_seconds as f64),
+                    webhook_url,
+                    JsValue::from_f64(rule.enabled as f64),
+                    rule.created_at.into(),
+                    rule.updated_at.into(),
+                    last_fired_at,
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_rules_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<Vec<models::AlertRuleRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(
+                self.sql_builder.alert_rules_list(),
+                &[JsValue::from_str(tenant_id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_rule_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<models::AlertRuleRecord>> {
+        SendFuture::new(async {
+            self.fetch_optional(
+                self.sql_builder.alert_rule_get(),
+                &[JsValue::from_str(tenant_id), JsValue::from_str(id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_rule_delete(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<u64>> {
+        SendFuture::new(async {
+            self.execute(
+                self.sql_builder.alert_rule_delete(),
+                &[JsValue::from_str(tenant_id), JsValue::from_str(id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_rule_mark_fired(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+        fired_at: Timestamp,
+    ) -> Result<models::AlertRuleRecord> {
+        SendFuture::new(async {
+            let rows = self
+                .execute(
+                    self.sql_builder.alert_rule_mark_fired(),
+                    &[
+                        JsValue::from_str(tenant_id),
+                        JsValue::from_str(id),
+                        fired_at.into(),
+                    ],
+                )
+                .await?;
+            if rows.unwrap_or(0) == 0 {
+                return Err(DbError::NotFound);
+            }
+            self.fetch_optional(
+                self.sql_builder.alert_rule_get(),
+                &[JsValue::from_str(tenant_id), JsValue::from_str(id)],
+            )
+            .await?
+            .ok_or(DbError::NotFound)
+        })
+        .await
+    }
+
+    async fn alert_event_create(
+        &self,
+        _tx: &Transaction,
+        event: models::AlertEventRecord,
+    ) -> Result<models::AlertEventRecord> {
+        SendFuture::new(async {
+            let webhook_url = match &event.webhook_url {
+                Some(value) => JsValue::from_str(value),
+                None => JsValue::null(),
+            };
+            let delivery_error = match &event.delivery_error {
+                Some(value) => JsValue::from_str(value),
+                None => JsValue::null(),
+            };
+            self.fetch_one(
+                self.sql_builder.alert_event_create(),
+                &[
+                    JsValue::from_str(&event.id),
+                    JsValue::from_str(&event.rule_id),
+                    JsValue::from_str(&event.tenant_id),
+                    JsValue::from_str(&event.service_name),
+                    JsValue::from_str(&event.metric),
+                    JsValue::from_str(&event.operator),
+                    JsValue::from_f64(event.threshold),
+                    JsValue::from_f64(event.observed_value),
+                    JsValue::from_f64(event.window_seconds as f64),
+                    event.fired_at.into(),
+                    JsValue::from_str(&event.status),
+                    webhook_url,
+                    JsValue::from_str(&event.delivery_status),
+                    delivery_error,
+                ],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_events_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<models::AlertEventRecord>> {
+        SendFuture::new(async {
+            self.fetch_all(
+                self.sql_builder.alert_events_list(limit),
+                &[JsValue::from_str(tenant_id)],
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn alert_event_update_delivery(
+        &self,
+        _tx: &Transaction,
+        id: &str,
+        delivery_status: &str,
+        delivery_error: Option<&str>,
+    ) -> Result<models::AlertEventRecord> {
+        SendFuture::new(async {
+            let delivery_error_value = match delivery_error {
+                Some(value) => JsValue::from_str(value),
+                None => JsValue::null(),
+            };
+            let rows = self
+                .execute(
+                    self.sql_builder.alert_event_update_delivery(),
+                    &[
+                        JsValue::from_str(id),
+                        JsValue::from_str(delivery_status),
+                        delivery_error_value,
+                    ],
+                )
+                .await?;
+            if rows.unwrap_or(0) == 0 {
+                return Err(DbError::NotFound);
+            }
+            self.fetch_optional(self.sql_builder.alert_event_get(), &[JsValue::from_str(id)])
+                .await?
+                .ok_or(DbError::NotFound)
         })
         .await
     }
