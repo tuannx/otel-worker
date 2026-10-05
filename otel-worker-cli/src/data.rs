@@ -338,6 +338,274 @@ impl Store for LibsqlStore {
         Ok(rows)
     }
 
+    async fn dashboard_upsert(
+        &self,
+        _tx: &Transaction,
+        dashboard: otel_worker_core::data::models::DashboardRecord,
+    ) -> Result<otel_worker_core::data::models::DashboardRecord> {
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.dashboard_upsert(),
+                params!(
+                    dashboard.id,
+                    dashboard.tenant_id,
+                    dashboard.name,
+                    dashboard.config,
+                    dashboard.config_hash,
+                    dashboard.created_at,
+                    dashboard.updated_at
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn dashboards_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<Vec<otel_worker_core::data::models::DashboardRecord>> {
+        let rows = self
+            .connection
+            .query(
+                &self.sql_builder.dashboards_list(),
+                params!(tenant_id.to_string()),
+            )
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
+
+    async fn dashboard_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<otel_worker_core::data::models::DashboardRecord>> {
+        let row = self
+            .connection
+            .query(
+                &self.sql_builder.dashboard_get(),
+                params!(tenant_id.to_string(), id.to_string()),
+            )
+            .await?
+            .fetch_optional()
+            .await?;
+        Ok(row)
+    }
+
+    async fn dashboard_delete(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<u64>> {
+        let rows = self
+            .connection
+            .execute(
+                &self.sql_builder.dashboard_delete(),
+                params!(tenant_id.to_string(), id.to_string()),
+            )
+            .await?;
+        Ok(Some(rows))
+    }
+
+    async fn alert_rule_upsert(
+        &self,
+        _tx: &Transaction,
+        rule: otel_worker_core::data::models::AlertRuleRecord,
+    ) -> Result<otel_worker_core::data::models::AlertRuleRecord> {
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.alert_rule_upsert(),
+                params!(
+                    rule.id,
+                    rule.tenant_id,
+                    rule.name,
+                    rule.service_name,
+                    rule.metric,
+                    rule.operator,
+                    rule.threshold,
+                    rule.window_seconds,
+                    rule.cooldown_seconds,
+                    rule.webhook_url,
+                    rule.enabled,
+                    rule.created_at,
+                    rule.updated_at,
+                    rule.last_fired_at
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn alert_rules_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<Vec<otel_worker_core::data::models::AlertRuleRecord>> {
+        let rows = self
+            .connection
+            .query(
+                &self.sql_builder.alert_rules_list(),
+                params!(tenant_id.to_string()),
+            )
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
+
+    async fn alert_rule_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<otel_worker_core::data::models::AlertRuleRecord>> {
+        let row = self
+            .connection
+            .query(
+                &self.sql_builder.alert_rule_get(),
+                params!(tenant_id.to_string(), id.to_string()),
+            )
+            .await?
+            .fetch_optional()
+            .await?;
+        Ok(row)
+    }
+
+    async fn alert_rule_delete(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<u64>> {
+        let rows = self
+            .connection
+            .execute(
+                &self.sql_builder.alert_rule_delete(),
+                params!(tenant_id.to_string(), id.to_string()),
+            )
+            .await?;
+        Ok(Some(rows))
+    }
+
+    async fn alert_rule_mark_fired(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        id: &str,
+        fired_at: Timestamp,
+    ) -> Result<otel_worker_core::data::models::AlertRuleRecord> {
+        let rows = self
+            .connection
+            .execute(
+                &self.sql_builder.alert_rule_mark_fired(),
+                params!(tenant_id.to_string(), id.to_string(), fired_at),
+            )
+            .await?;
+        if rows == 0 {
+            return Err(otel_worker_core::data::DbError::NotFound);
+        }
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.alert_rule_get(),
+                params!(tenant_id.to_string(), id.to_string()),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn alert_event_create(
+        &self,
+        _tx: &Transaction,
+        event: otel_worker_core::data::models::AlertEventRecord,
+    ) -> Result<otel_worker_core::data::models::AlertEventRecord> {
+        let saved = self
+            .connection
+            .query(
+                &self.sql_builder.alert_event_create(),
+                params!(
+                    event.id,
+                    event.rule_id,
+                    event.tenant_id,
+                    event.service_name,
+                    event.metric,
+                    event.operator,
+                    event.threshold,
+                    event.observed_value,
+                    event.window_seconds,
+                    event.fired_at,
+                    event.status,
+                    event.webhook_url,
+                    event.delivery_status,
+                    event.delivery_error
+                ),
+            )
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
+    async fn alert_events_list(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<otel_worker_core::data::models::AlertEventRecord>> {
+        let rows = self
+            .connection
+            .query(
+                &self.sql_builder.alert_events_list(limit),
+                params!(tenant_id.to_string()),
+            )
+            .await?
+            .fetch_all()
+            .await?;
+        Ok(rows)
+    }
+
+    async fn alert_event_update_delivery(
+        &self,
+        _tx: &Transaction,
+        id: &str,
+        delivery_status: &str,
+        delivery_error: Option<&str>,
+    ) -> Result<otel_worker_core::data::models::AlertEventRecord> {
+        let rows = self
+            .connection
+            .execute(
+                &self.sql_builder.alert_event_update_delivery(),
+                params!(
+                    id.to_string(),
+                    delivery_status.to_string(),
+                    delivery_error.map(|value| value.to_string())
+                ),
+            )
+            .await?;
+        if rows == 0 {
+            return Err(otel_worker_core::data::DbError::NotFound);
+        }
+        let saved = self
+            .connection
+            .query(&self.sql_builder.alert_event_get(), params!(id.to_string()))
+            .await?
+            .fetch_one()
+            .await?;
+        Ok(saved)
+    }
+
     async fn api_key_get(
         &self,
         key_hash: &str,

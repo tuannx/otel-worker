@@ -468,3 +468,55 @@ impl<'de> Deserialize<'de> for HexEncodedId {
         deserializer.deserialize_string(HexEncodedIdVisitor)
     }
 }
+
+/// Dashboard row as stored. `config` is canonical JSON text; API handlers
+/// parse it into a JSON value and verify it against `config_hash`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DashboardRecord {
+    pub id: String,
+    pub tenant_id: String,
+    pub name: String,
+    pub config: String,
+    pub config_hash: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// Alert rule row as stored. Enum-like fields stay text at the SQL boundary
+/// and are validated when converted to `control::AlertRule`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AlertRuleRecord {
+    pub id: String,
+    pub tenant_id: String,
+    pub name: String,
+    pub service_name: Option<String>,
+    pub metric: String,
+    pub operator: String,
+    pub threshold: f64,
+    pub window_seconds: i64,
+    pub cooldown_seconds: i64,
+    pub webhook_url: Option<String>,
+    pub enabled: i64,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub last_fired_at: Option<Timestamp>,
+}
+
+/// Alert event row as stored; enum-like fields are validated at API boundary.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AlertEventRecord {
+    pub id: String,
+    pub rule_id: String,
+    pub tenant_id: String,
+    pub service_name: String,
+    pub metric: String,
+    pub operator: String,
+    pub threshold: f64,
+    pub observed_value: f64,
+    pub window_seconds: i64,
+    pub fired_at: Timestamp,
+    pub status: String,
+    pub webhook_url: Option<String>,
+    pub delivery_status: String,
+    pub delivery_error: Option<String>,
+}

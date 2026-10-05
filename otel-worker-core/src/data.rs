@@ -150,4 +150,137 @@ pub trait Store: Send + Sync {
             "spans_service_rows not implemented".into(),
         ))
     }
+
+    // --- P3: dashboards / alerts -------------------------------------------
+    // Default implementations keep other Store impls compiling; D1 and
+    // libsql override them.
+
+    async fn dashboard_upsert(
+        &self,
+        _tx: &Transaction,
+        _dashboard: models::DashboardRecord,
+    ) -> Result<models::DashboardRecord> {
+        Err(DbError::InternalError(
+            "dashboard_upsert not implemented".into(),
+        ))
+    }
+
+    async fn dashboards_list(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+    ) -> Result<Vec<models::DashboardRecord>> {
+        Err(DbError::InternalError(
+            "dashboards_list not implemented".into(),
+        ))
+    }
+
+    async fn dashboard_get(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _id: &str,
+    ) -> Result<Option<models::DashboardRecord>> {
+        Err(DbError::InternalError(
+            "dashboard_get not implemented".into(),
+        ))
+    }
+
+    async fn dashboard_delete(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _id: &str,
+    ) -> Result<Option<u64>> {
+        Err(DbError::InternalError(
+            "dashboard_delete not implemented".into(),
+        ))
+    }
+
+    async fn alert_rule_upsert(
+        &self,
+        _tx: &Transaction,
+        _rule: models::AlertRuleRecord,
+    ) -> Result<models::AlertRuleRecord> {
+        Err(DbError::InternalError(
+            "alert_rule_upsert not implemented".into(),
+        ))
+    }
+
+    async fn alert_rules_list(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+    ) -> Result<Vec<models::AlertRuleRecord>> {
+        Err(DbError::InternalError(
+            "alert_rules_list not implemented".into(),
+        ))
+    }
+
+    async fn alert_rule_get(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _id: &str,
+    ) -> Result<Option<models::AlertRuleRecord>> {
+        Err(DbError::InternalError(
+            "alert_rule_get not implemented".into(),
+        ))
+    }
+
+    async fn alert_rule_delete(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _id: &str,
+    ) -> Result<Option<u64>> {
+        Err(DbError::InternalError(
+            "alert_rule_delete not implemented".into(),
+        ))
+    }
+
+    async fn alert_rule_mark_fired(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _id: &str,
+        _fired_at: Timestamp,
+    ) -> Result<models::AlertRuleRecord> {
+        Err(DbError::InternalError(
+            "alert_rule_mark_fired not implemented".into(),
+        ))
+    }
+
+    async fn alert_event_create(
+        &self,
+        _tx: &Transaction,
+        _event: models::AlertEventRecord,
+    ) -> Result<models::AlertEventRecord> {
+        Err(DbError::InternalError(
+            "alert_event_create not implemented".into(),
+        ))
+    }
+
+    async fn alert_events_list(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _limit: Option<u32>,
+    ) -> Result<Vec<models::AlertEventRecord>> {
+        Err(DbError::InternalError(
+            "alert_events_list not implemented".into(),
+        ))
+    }
+
+    async fn alert_event_update_delivery(
+        &self,
+        _tx: &Transaction,
+        _id: &str,
+        _delivery_status: &str,
+        _delivery_error: Option<&str>,
+    ) -> Result<models::AlertEventRecord> {
+        Err(DbError::InternalError(
+            "alert_event_update_delivery not implemented".into(),
+        ))
+    }
 }

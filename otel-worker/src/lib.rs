@@ -16,6 +16,7 @@ use worker::*;
 use ws::client::WebSocketWorkerClient;
 use ws::handlers::{ws_connect, WorkerApiState};
 
+mod alerts;
 mod basin;
 mod data;
 mod middleware;
@@ -34,6 +35,14 @@ fn start() {
         .with(fmt_layer)
         .with(perf_layer)
         .init();
+}
+
+#[event(scheduled)]
+async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let store = Arc::new(D1Store::new(
+        env.d1("DB").expect("unable to create a database"),
+    ));
+    alerts::run_scheduled_alerts(store).await;
 }
 
 #[event(fetch)]
