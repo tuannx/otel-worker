@@ -64,3 +64,14 @@ Verdict chỉ pass khi cả 4 điểm đo được trên fixture lặp lại:
 ## 6. Ngoài scope phase này
 - Eval chất lượng câu trả lời (LLM-as-judge) — nếu làm, làm deterministic trước (schema/score lưu như span riêng), không đưa LLM judge vào gate.
 - Prompt versioning / dataset quản lý như Langfuse — cân nhắc sau khi P4 pass.
+
+## 7. Trạng thái triển khai (2026-10-05, branch `feat/p4-ai-trace`)
+
+Đã làm đúng spec ở trên:
+
+- **Mapping layer**: `otel-worker-core/src/genai.rs` đọc mọi attribute qua danh sách alias (tên hiện tại trước, alias cũ sau): provider `gen_ai.provider.name`/`gen_ai.system`; tokens `gen_ai.usage.input_tokens`/`prompt_tokens`, `output_tokens`/`completion_tokens`, cache read/creation; TTFT `gen_ai.server.time_to_first_token` (giây → ms); `gen_ai.response.finish_reasons` giữ dạng mảng JSON; conversation `gen_ai.conversation.id`/`gen_ai.session.id`/`session.id`. Thiếu `operation` thì suy luận: có tool name → `execute_tool`, có model/token → `chat`, có agent name → `invoke_agent`.
+- **Cost ở ingest**: chọn price có `effective_from` mới nhất không sau thời điểm span (ưu tiên khớp provider, fallback khớp model); cache rate trống thì dùng input rate; kết quả lưu vào `genai_spans.cost_usd` kèm `price_provider/price_model/price_effective_from` (= `price_version` dạng `provider:model@effective_from`). Đổi giá chỉ áp cho span bắt đầu sau thời điểm hiệu lực; span đã lưu không bị tính lại.
+- **Privacy gate**: sanitize chạy trong `Service::ingest_traces` trước mọi lần ghi (D1 + Basin). Mặc định drop `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.prompt`, `gen_ai.completion`, `llm.prompts`, `llm.completions`. Khi tenant bật `capture_content` (`PUT /v1/ai/settings`), nội dung vẫn qua redaction xác định (prefix API key kiểu `sk-`/`ghp_`/`AKIA…`, email, dãy số dạng thẻ) và truncate 8.000 ký tự.
+- **API/UI/MCP dùng chung một projection**: `GET /v1/ai/overview` (totals + cost theo provider/model + theo operation), `/v1/ai/runs`, `/v1/ai/runs/:trace_id` (replay: cây span theo depth, token/cost/TTFT/`price_version` từng bước), `/v1/ai/tools`, `/v1/ai/search`, `GET|POST /v1/ai/prices`, `GET|PUT /v1/ai/settings`. MCP (otel-worker-cli) gọi đúng các endpoint này qua ApiClient: `llm_cost_by_model`, `agent_run`, `tool_failures`, `search_ai_traces`. UI tab AI hiển thị cùng số liệu và form quản lý giá + toggle capture.
+
+Gate §5 ở mức store/fixture: **pass** — test `p4_genai_cost_privacy_and_replay` (ingest thật qua Service + libsql) chứng minh cả 4 điểm: cost bằng đúng phép nhân tokens × giá (sai số 0 theo công thức), chuỗi giả API key không xuất hiện trong span đã lưu/projection/sink records (cả khi chưa opt-in lẫn khi đã opt-in), replay cho đúng cây `[0,1,2,1]` và tổng cost, đổi giá chỉ áp cho span mới. Phần chưa chạy được: đối chiếu Basin SQL và deploy thật trên Cloudflare account (chung nợ P1–P3) → verdict tổng của phase vẫn là `warn` cho tới khi gate hạ tầng đó chạy.

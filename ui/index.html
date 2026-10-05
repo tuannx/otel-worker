@@ -49,6 +49,7 @@
   <button data-view="map" class="nav">Map</button>
   <button data-view="dashboards" class="nav">Dashboards</button>
   <button data-view="alerts" class="nav">Alerts</button>
+  <button data-view="ai" class="nav">AI</button>
 </header>
 <main>
   <section id="view-services"></section>
@@ -58,6 +59,7 @@
   <section id="view-map" hidden></section>
   <section id="view-dashboards" hidden></section>
   <section id="view-alerts" hidden></section>
+  <section id="view-ai" hidden></section>
   <section id="view-trace" hidden></section>
 </main>
 <script>
@@ -87,8 +89,8 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','
 
 function show(view) {
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-  ['services','traces','logs','metrics','map','dashboards','alerts','trace'].forEach(v => $('view-' + v).hidden = v !== view);
-  ({services: loadServices, traces: loadTraces, logs: loadLogs, metrics: loadMetrics, map: loadMap, dashboards: loadDashboards, alerts: loadAlerts}[view] || (() => {}))()
+  ['services','traces','logs','metrics','map','dashboards','alerts','ai','trace'].forEach(v => $('view-' + v).hidden = v !== view);
+  ({services: loadServices, traces: loadTraces, logs: loadLogs, metrics: loadMetrics, map: loadMap, dashboards: loadDashboards, alerts: loadAlerts, ai: loadAi}[view] || (() => {}))()
     .catch(e => { $('status').textContent = e.message; $('status').className = 'err'; });
 }
 
@@ -311,6 +313,105 @@ async function loadAlerts() {
 }
 
 function showError(e) { $('status').textContent = e.message; $('status').className = 'err'; }
+
+const usd = (v) => '$' + Number(v || 0).toFixed(4);
+const tok = (v) => Number(v || 0).toLocaleString('en-US');
+
+async function loadAi() {
+  const [overview, runs, tools, prices, settings] = await Promise.all([
+    api('/v1/ai/overview'), api('/v1/ai/runs'), api('/v1/ai/tools'),
+    api('/v1/ai/prices'), api('/v1/ai/settings'),
+  ]);
+  const t = overview.totals;
+  $('view-ai').innerHTML = `<h2>AI traces — LLM overview</h2>
+    <div class="form">
+      <div class="card"><h2>GenAI spans</h2><p>${t.span_count} spans · ${t.trace_count} runs</p></div>
+      <div class="card"><h2>Total cost</h2><p>${usd(t.cost_usd)} <span class="dim">(${t.priced_span_count} priced spans)</span></p></div>
+      <div class="card"><h2>Tokens</h2><p>in ${tok(t.input_tokens)} · out ${tok(t.output_tokens)}<br>cache read ${tok(t.cache_read_tokens)} · creation ${tok(t.cache_creation_tokens)}</p></div>
+      <div class="card"><h2>Errors</h2><p class="${t.error_count ? 'err' : ''}">${t.error_count} (${pct(t.error_rate)})</p></div>
+    </div>
+    <h2>Cost by model</h2>${overview.by_model.length ? `<table><tr><th>Provider</th><th>Model</th><th>Spans</th><th>In</th><th>Out</th><th>Cache r/c</th><th>Cost</th><th>avg TTFT</th><th>p95 dur</th><th>Errors</th></tr>
+      ${overview.by_model.map(m => `<tr><td>${esc(m.provider)}</td><td>${esc(m.model)}</td><td>${m.span_count}</td><td>${tok(m.input_tokens)}</td><td>${tok(m.output_tokens)}</td><td>${tok(m.cache_read_tokens)}/${tok(m.cache_creation_tokens)}</td><td>${usd(m.cost_usd)}</td><td>${m.avg_ttft_ms == null ? '-' : ms(m.avg_ttft_ms)}</td><td>${ms(m.p95_duration_ms)}</td><td class="${m.error_count ? 'err' : ''}">${m.error_count}</td></tr>`).join('')}</table>` : '<p class="dim">No GenAI spans yet. Send spans with gen_ai.* attributes to /v1/traces.</p>'}
+    <p class="dim">Operations: ${overview.by_operation.map(o => `${esc(o.operation)} × ${o.span_count}`).join(' · ') || '-'}</p>
+    <h2>Agent runs</h2>${runs.length ? `<table><tr><th>Started</th><th>Agent</th><th>Service</th><th>Spans</th><th>Tokens in/out</th><th>Cost</th><th>Errors</th><th>Trace</th></tr>
+      ${runs.map(r => `<tr class="clickable" data-run="${esc(r.trace_id)}"><td class="dim">${when(r.started_at)}</td><td>${esc(r.agent_name || '-')}</td><td>${esc(r.service_name)}</td><td>${r.span_count}</td><td>${tok(r.input_tokens)}/${tok(r.output_tokens)}</td><td>${usd(r.total_cost_usd)}</td><td class="${r.error_count ? 'err' : ''}">${r.error_count}</td><td class="dim">${esc(r.trace_id.slice(0, 12))}…</td></tr>`).join('')}</table>` : '<p class="dim">No agent runs yet.</p>'}
+    <div id="ai-replay"></div>
+    <h2>Tool health (execute_tool)</h2>${tools.length ? `<table><tr><th>Tool</th><th>Calls</th><th>Errors</th><th>Error rate</th><th>avg</th><th>p95</th></tr>
+      ${tools.map(x => `<tr><td>${esc(x.tool_name)}</td><td>${x.call_count}</td><td class="${x.error_count ? 'err' : ''}">${x.error_count}</td><td>${pct(x.error_rate)}</td><td>${ms(x.avg_duration_ms)}</td><td>${ms(x.p95_duration_ms)}</td></tr>`).join('')}</table>` : '<p class="dim">No execute_tool spans yet.</p>'}
+    <h2>Search AI spans</h2><div class="form">
+      <label>Text<input id="ai-q" placeholder="model, tool, agent, operation…"></label>
+      <label>Errors<select id="ai-err"><option value="">any</option><option value="true">errors only</option><option value="false">ok only</option></select></label>
+      <button id="ai-search-btn">Search</button>
+    </div><div id="ai-search-results"></div>
+    <h2>Model prices (USD per 1M tokens)</h2>
+    ${prices.length ? `<table><tr><th>Provider</th><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache creation</th><th>Effective from</th><th>price_version</th></tr>
+      ${prices.map(p => `<tr><td>${esc(p.provider)}</td><td>${esc(p.model)}</td><td>${p.input_per_mtok}</td><td>${p.output_per_mtok}</td><td>${p.cache_read_per_mtok ?? '-'}</td><td>${p.cache_creation_per_mtok ?? '-'}</td><td class="dim">${when(p.effective_from)}</td><td class="dim">${esc(p.provider)}:${esc(p.model)}@${p.effective_from}</td></tr>`).join('')}</table>` : '<p class="dim">No prices configured — spans ingest without cost until a price exists.</p>'}
+    <div class="form">
+      <label>Provider<input id="price-provider" value="openai"></label>
+      <label>Model<input id="price-model" value="gpt-x"></label>
+      <label>Input /Mtok<input id="price-input" type="number" step="any" value="2"></label>
+      <label>Output /Mtok<input id="price-output" type="number" step="any" value="8"></label>
+      <label>Cache read<input id="price-cache-read" type="number" step="any" placeholder="= input rate"></label>
+      <label>Cache creation<input id="price-cache-creation" type="number" step="any" placeholder="= input rate"></label>
+      <label>Effective from<input id="price-effective" type="datetime-local"></label>
+      <button id="price-save">Save price</button>
+    </div>
+    <p class="dim">Changing a price only affects new spans; stored spans keep their price_version.</p>
+    <h2>Privacy</h2><div class="form">
+      <label>Capture prompt/completion content (capture_content)<select id="ai-capture"><option value="false">false — drop at ingest (default)</option><option value="true">true — keep, redacted + truncated</option></select></label>
+      <button id="ai-capture-save">Save setting</button>
+    </div>
+    <p class="dim">Tenant: ${esc(settings.tenant_id)} · current capture_content: ${settings.capture_content}. Even when on, API-key-like strings, emails and card numbers are redacted and content is truncated.</p>`;
+
+  document.querySelectorAll('[data-run]').forEach(tr => tr.onclick = () => loadAiRun(tr.dataset.run).catch(showError));
+  $('ai-capture').value = String(settings.capture_content);
+  $('ai-search-btn').onclick = async () => {
+    const q = $('ai-q').value.trim();
+    const err = $('ai-err').value;
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (err) params.set('has_error', err);
+    const results = await api('/v1/ai/search?' + params.toString());
+    $('ai-search-results').innerHTML = results.length ? `<table><tr><th>Time</th><th>Operation</th><th>Span</th><th>Model</th><th>Tokens in/out</th><th>Cost</th><th></th></tr>
+      ${results.map(s => `<tr><td class="dim">${when(s.start_time)}</td><td><span class="pill">${esc(s.operation)}</span></td><td>${esc(s.span_name)}</td><td>${esc(s.response_model || s.request_model || '-')}</td><td>${tok(s.input_tokens)}/${tok(s.output_tokens)}</td><td>${s.cost_usd == null ? '-' : usd(s.cost_usd)}</td><td class="${s.is_error ? 'err' : ''}">${s.is_error ? 'error' : ''}</td></tr>`).join('')}</table>` : '<p class="dim">No matching GenAI spans.</p>';
+  };
+  $('price-save').onclick = async () => {
+    const effective = $('price-effective').value ? Date.parse($('price-effective').value) / 1000 : Math.floor(Date.now() / 1000);
+    const num = (id) => { const v = $(id).value; return v === '' ? null : Number(v); };
+    await apiWrite('/v1/ai/prices', 'POST', {
+      provider: $('price-provider').value,
+      model: $('price-model').value,
+      input_per_mtok: Number($('price-input').value),
+      output_per_mtok: Number($('price-output').value),
+      cache_read_per_mtok: num('price-cache-read'),
+      cache_creation_per_mtok: num('price-cache-creation'),
+      effective_from: effective,
+    });
+    await loadAi();
+  };
+  $('ai-capture-save').onclick = async () => {
+    await apiWrite('/v1/ai/settings', 'PUT', { capture_content: $('ai-capture').value === 'true' });
+    await loadAi();
+  };
+}
+
+async function loadAiRun(traceId) {
+  const run = await api('/v1/ai/runs/' + traceId);
+  const t0 = run.started_at, t1 = run.ended_at || run.started_at;
+  $('ai-replay').innerHTML = `<div class="card"><h2>Agent run replay — ${esc(run.agent_name || 'agent')}</h2>
+    <p class="dim">trace ${esc(run.trace_id)} · ${run.span_count} spans · ${ms(run.duration_ms)} · cost ${usd(run.total_cost_usd)} · tokens in ${tok(run.input_tokens)} / out ${tok(run.output_tokens)} · cache ${tok(run.cache_read_tokens)}/${tok(run.cache_creation_tokens)} · errors ${run.error_count}</p>
+    <div class="gantt">${run.spans.map(s => {
+      const left = ((s.start_time - t0) / (t1 - t0 || 1)) * 100;
+      const width = Math.max((s.duration_ms / ((t1 - t0) * 1000 || 1)) * 100, 0.3);
+      const detail = [s.response_model || s.request_model || '', s.input_tokens != null ? 'in ' + tok(s.input_tokens) : '', s.output_tokens != null ? 'out ' + tok(s.output_tokens) : '', s.cost_usd != null ? usd(s.cost_usd) : '', s.ttft_ms != null ? 'ttft ' + ms(s.ttft_ms) : ''].filter(Boolean).join(' · ');
+      return `<div class="row"><span class="name" title="${esc(s.span_name)}">${'· '.repeat(s.depth)}<span class="pill">${esc(s.operation)}</span> ${esc(s.span_name)}</span>
+        <span class="track"><span class="bar ${s.is_error ? 'error' : ''}" style="left:${left}%;width:${width}%"></span></span>
+        <span class="dur">${ms(s.duration_ms)}</span></div>
+        <div class="row"><span class="name"></span><span class="dim">${esc(detail)}${s.price_version ? ' · ' + esc(s.price_version) : ''}${s.finish_reasons && s.finish_reasons !== '[]' ? ' · finish ' + esc(s.finish_reasons) : ''}</span><span></span></div>`;
+    }).join('')}</div>
+    <p><button onclick="loadAi().catch(showError)">← AI overview</button></p></div>`;
+  $('ai-replay').scrollIntoView({ behavior: 'smooth' });
+}
 
 
 $('save').onclick = () => {

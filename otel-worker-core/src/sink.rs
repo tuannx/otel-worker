@@ -72,3 +72,49 @@ pub fn metric_record(sample: &crate::data::models::MetricSample) -> serde_json::
         "resource_attributes": sample.resource_attributes,
     })
 }
+
+/// Flat Basin record for the P4 GenAI projection (see basin/genai_spans.sql).
+/// Content attributes are never part of this shape — only the normalized,
+/// already-sanitized projection fields.
+pub fn genai_span_record(record: &crate::data::models::GenAiSpanRecord) -> serde_json::Value {
+    let price_version = match (
+        &record.price_provider,
+        &record.price_model,
+        &record.price_effective_from,
+    ) {
+        (Some(provider), Some(model), Some(effective_from)) => Some(format!(
+            "{}:{}@{}",
+            provider,
+            model,
+            effective_from.fractional()
+        )),
+        _ => None,
+    };
+    serde_json::json!({
+        "tenant_id": record.tenant_id,
+        "trace_id": record.trace_id.as_inner(),
+        "span_id": record.span_id.as_inner(),
+        "parent_span_id": record.parent_span_id.as_ref().map(|id| id.as_inner()),
+        "service_name": record.service_name,
+        "span_name": record.span_name,
+        "operation": record.operation,
+        "provider": record.provider,
+        "request_model": record.request_model,
+        "response_model": record.response_model,
+        "agent_name": record.agent_name,
+        "tool_name": record.tool_name,
+        "conversation_id": record.conversation_id,
+        "input_tokens": record.input_tokens,
+        "output_tokens": record.output_tokens,
+        "cache_read_tokens": record.cache_read_tokens,
+        "cache_creation_tokens": record.cache_creation_tokens,
+        "ttft_ms": record.ttft_ms,
+        "duration_ms": record.duration_ms,
+        "finish_reasons": record.finish_reasons,
+        "cost_usd": record.cost_usd,
+        "price_version": price_version,
+        "is_error": record.is_error,
+        "start_ts": record.start_time.fractional(),
+        "end_ts": record.end_time.fractional(),
+    })
+}

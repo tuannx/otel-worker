@@ -283,4 +283,78 @@ pub trait Store: Send + Sync {
             "alert_event_update_delivery not implemented".into(),
         ))
     }
+
+    // --- P4: model prices / tenant AI settings / genai projection ----------
+    // Default implementations keep other Store impls compiling; D1 and
+    // libsql override them. The settings default is the privacy-safe one:
+    // content capture off.
+
+    async fn model_prices_list(&self, _tx: &Transaction) -> Result<Vec<models::ModelPrice>> {
+        Err(DbError::InternalError(
+            "model_prices_list not implemented".into(),
+        ))
+    }
+
+    async fn model_price_upsert(
+        &self,
+        _tx: &Transaction,
+        _price: models::ModelPrice,
+    ) -> Result<models::ModelPrice> {
+        Err(DbError::InternalError(
+            "model_price_upsert not implemented".into(),
+        ))
+    }
+
+    async fn tenant_ai_settings_get(
+        &self,
+        _tx: &Transaction,
+        tenant_id: &str,
+    ) -> Result<models::TenantAiSettings> {
+        Ok(models::TenantAiSettings {
+            tenant_id: tenant_id.to_string(),
+            capture_content: false,
+        })
+    }
+
+    async fn tenant_ai_settings_upsert(
+        &self,
+        _tx: &Transaction,
+        _settings: models::TenantAiSettings,
+    ) -> Result<models::TenantAiSettings> {
+        Err(DbError::InternalError(
+            "tenant_ai_settings_upsert not implemented".into(),
+        ))
+    }
+
+    async fn genai_span_create(
+        &self,
+        _tx: &Transaction,
+        _record: models::GenAiSpanRecord,
+    ) -> Result<models::GenAiSpanRecord> {
+        Err(DbError::InternalError(
+            "genai_span_create not implemented".into(),
+        ))
+    }
+
+    async fn genai_spans_list(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _limit: Option<u32>,
+    ) -> Result<Vec<models::GenAiSpanRecord>> {
+        Err(DbError::InternalError(
+            "genai_spans_list not implemented".into(),
+        ))
+    }
+
+    async fn genai_spans_list_by_trace(
+        &self,
+        _tx: &Transaction,
+        _tenant_id: &str,
+        _trace_id: &HexEncodedId,
+    ) -> Result<Vec<models::GenAiSpanRecord>> {
+        Err(DbError::InternalError(
+            "genai_spans_list_by_trace not implemented".into(),
+        ))
+    }
 }

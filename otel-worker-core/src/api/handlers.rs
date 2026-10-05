@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod control;
 pub mod otel;
 pub mod query;

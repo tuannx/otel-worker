@@ -15,8 +15,8 @@ Trạng thái: `có` / `kế hoạch Pn` / `không làm`. Claim nào chưa có e
 | Dashboards / query builder | không | có | có | P3 |
 | Alerts → webhook | không | có | có | P3 (Cron + Queues) |
 | Multi-tenant + API key/service | không (1 token tĩnh) | có | có | P1 |
-| LLM / AI trace (`gen_ai.*`, token cost) | không | có | có (LLM Obs.) | P4 — xem `docs/AI-TRACE.md` |
-| MCP cho agent truy vấn telemetry | có (khung, qua CLI) | có (mcp server chính thức) | — | mở rộng ở P2/P4 |
+| LLM / AI trace (`gen_ai.*`, token cost) | không | có | có (LLM Obs.) | có (P4: projection `genai_spans`, cost ở ingest theo `model_prices`, replay + MCP — xem `docs/AI-TRACE.md` §7) |
+| MCP cho agent truy vấn telemetry | có (khung, qua CLI) | có (mcp server chính thức) | — | có (`get_trace` + P4: `llm_cost_by_model`, `agent_run`, `tool_failures`, `search_ai_traces`) |
 | Storage analytics | D1 (1 bảng spans) | ClickHouse | proprietary | Basin: Iceberg/R2 + Basin SQL; D1 chỉ hot + control plane |
 | Retention dài + compaction tự động | không (không TTL) | ClickHouse TTL | có | P1/P5: D1 TTL ngắn + Basin Catalog snapshot expiration |
 | Continuous profiling / eBPF / RUM replay | không | không | có | **không làm** — không có tương đương sạch trên Workers |
